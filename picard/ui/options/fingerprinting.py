@@ -17,11 +17,11 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-import os, sys
-import picard.musicdns
-from PyQt4 import QtCore, QtGui
-from picard.util import webbrowser2
-from picard.config import BoolOption, TextOption
+import os
+from PyQt4 import QtGui, QtCore
+from picard import config
+from picard.util import webbrowser2, find_executable
+from picard.const import FPCALC_NAMES
 from picard.ui.options import OptionsPage, OptionsCheckError, register_options_page
 from picard.ui.ui_options_fingerprinting import Ui_FingerprintingOptionsPage
 
@@ -35,53 +35,53 @@ class FingerprintingOptionsPage(OptionsPage):
     ACTIVE = True
 
     options = [
-        BoolOption("setting", "enable_fingerprinting", False),
-        TextOption("setting", "fingerprinting_system", "acoustid"),
-        TextOption("setting", "acoustid_fpcalc", ""),
-        TextOption("setting", "acoustid_apikey", ""),
+        config.BoolOption("setting", "ignore_existing_acoustid_fingerprints", False),
+        config.TextOption("setting", "fingerprinting_system", "acoustid"),
+        config.TextOption("setting", "acoustid_fpcalc", ""),
+        config.TextOption("setting", "acoustid_apikey", ""),
     ]
 
     def __init__(self, parent=None):
         super(FingerprintingOptionsPage, self).__init__(parent)
+        self._fpcalc_valid = True
         self.ui = Ui_FingerprintingOptionsPage()
         self.ui.setupUi(self)
-        self.connect(self.ui.enable_fingerprinting, QtCore.SIGNAL("clicked()"), self.update_groupboxes)
-        self.connect(self.ui.use_musicdns, QtCore.SIGNAL("clicked()"), self.update_groupboxes)
-        self.connect(self.ui.use_acoustid, QtCore.SIGNAL("clicked()"), self.update_groupboxes)
+        self.ui.disable_fingerprinting.clicked.connect(self.update_groupboxes)
+        self.ui.use_acoustid.clicked.connect(self.update_groupboxes)
+        self.ui.acoustid_fpcalc.textChanged.connect(self._acoustid_fpcalc_check)
         self.ui.acoustid_fpcalc_browse.clicked.connect(self.acoustid_fpcalc_browse)
         self.ui.acoustid_fpcalc_download.clicked.connect(self.acoustid_fpcalc_download)
         self.ui.acoustid_apikey_get.clicked.connect(self.acoustid_apikey_get)
 
     def load(self):
-        self.ui.enable_fingerprinting.setChecked(self.config.setting["enable_fingerprinting"])
-        if picard.musicdns.ofa is None:
-            self.ui.use_musicdns.setEnabled(False)
-        if self.config.setting["fingerprinting_system"] == "acoustid":
+        if config.setting["fingerprinting_system"] == "acoustid":
             self.ui.use_acoustid.setChecked(True)
         else:
-            self.ui.use_musicdns.setChecked(True)
-        self.ui.acoustid_fpcalc.setText(self.config.setting["acoustid_fpcalc"])
-        self.ui.acoustid_apikey.setText(self.config.setting["acoustid_apikey"])
+            self.ui.disable_fingerprinting.setChecked(True)
+        self.ui.acoustid_fpcalc.setText(config.setting["acoustid_fpcalc"])
+        self.ui.acoustid_apikey.setText(config.setting["acoustid_apikey"])
+        self.ui.ignore_existing_acoustid_fingerprints.setChecked(config.setting["ignore_existing_acoustid_fingerprints"])
         self.update_groupboxes()
 
     def save(self):
-        self.config.setting["enable_fingerprinting"] = self.ui.enable_fingerprinting.isChecked()
         if self.ui.use_acoustid.isChecked():
-            self.config.setting["fingerprinting_system"] = "acoustid"
+            config.setting["fingerprinting_system"] = "acoustid"
         else:
-            self.config.setting["fingerprinting_system"] = "musicdns"
-        self.config.setting["acoustid_fpcalc"] = unicode(self.ui.acoustid_fpcalc.text())
-        self.config.setting["acoustid_apikey"] = unicode(self.ui.acoustid_apikey.text())
+            config.setting["fingerprinting_system"] = ""
+        config.setting["acoustid_fpcalc"] = unicode(self.ui.acoustid_fpcalc.text())
+        config.setting["acoustid_apikey"] = unicode(self.ui.acoustid_apikey.text())
+        config.setting["ignore_existing_acoustid_fingerprints"] = self.ui.ignore_existing_acoustid_fingerprints.isChecked()
 
     def update_groupboxes(self):
-        if self.ui.enable_fingerprinting.isChecked() and self.ui.use_acoustid.isChecked():
+        if self.ui.use_acoustid.isChecked():
             self.ui.acoustid_settings.setEnabled(True)
-            if self.ui.acoustid_fpcalc.text().isEmpty():
-                fpcalc_path = self.find_executable("fpcalc")
+            if not self.ui.acoustid_fpcalc.text():
+                fpcalc_path = find_executable(*FPCALC_NAMES)
                 if fpcalc_path:
                     self.ui.acoustid_fpcalc.setText(fpcalc_path)
         else:
             self.ui.acoustid_settings.setEnabled(False)
+        self._acoustid_fpcalc_check()
 
     def acoustid_fpcalc_browse(self):
         path = QtGui.QFileDialog.getOpenFileName(self, "", self.ui.acoustid_fpcalc.text())
@@ -90,21 +90,55 @@ class FingerprintingOptionsPage(OptionsPage):
             self.ui.acoustid_fpcalc.setText(path)
 
     def acoustid_fpcalc_download(self):
-        webbrowser2.open("http://acoustid.org/chromaprint#download")
+        webbrowser2.goto('chromaprint')
 
     def acoustid_apikey_get(self):
-        webbrowser2.open("http://acoustid.org/api-key")
+        webbrowser2.goto('acoustid_apikey')
 
-    def find_executable(self, name):
-        if sys.platform == 'win32':
-            executables = [name + '.exe']
+    def _acoustid_fpcalc_check(self):
+        if not self.ui.use_acoustid.isChecked():
+            self._acoustid_fpcalc_set_success("")
+            return
+        fpcalc = unicode(self.ui.acoustid_fpcalc.text())
+        if not fpcalc:
+            self._acoustid_fpcalc_set_success("")
+            return
+
+        self._fpcalc_valid = False
+        process = QtCore.QProcess(self)
+        process.finished.connect(self._on_acoustid_fpcalc_check_finished)
+        process.error.connect(self._on_acoustid_fpcalc_check_error)
+        process.start(fpcalc, ["-v"])
+
+    def _on_acoustid_fpcalc_check_finished(self, exit_code, exit_status):
+        process = self.sender()
+        if exit_code == 0 and exit_status == 0:
+            output = str(process.readAllStandardOutput())
+            if output.startswith("fpcalc version"):
+                self._acoustid_fpcalc_set_success(output.strip())
+            else:
+                self._acoustid_fpcalc_set_error()
         else:
-            executables = [name]
-        for path in os.environ.get('PATH', '').split(os.pathsep):
-            for executable in executables:
-                f = os.path.join(path, executable)
-                if os.path.isfile(f):
-                    return f
+            self._acoustid_fpcalc_set_error()
 
+    def _on_acoustid_fpcalc_check_error(self, error):
+        self._acoustid_fpcalc_set_error()
+
+    def _acoustid_fpcalc_set_success(self, version):
+        self._fpcalc_valid = True
+        self.ui.acoustid_fpcalc_info.setStyleSheet("")
+        self.ui.acoustid_fpcalc_info.setText(version)
+
+    def _acoustid_fpcalc_set_error(self):
+        self._fpcalc_valid = False
+        self.ui.acoustid_fpcalc_info.setStyleSheet(self.STYLESHEET_ERROR)
+        self.ui.acoustid_fpcalc_info.setText(_("Please select a valid fpcalc executable."))
+
+    def check(self):
+        if not self._fpcalc_valid:
+            raise OptionsCheckError(_("Invalid fpcalc executable"), _("Please select a valid fpcalc executable."))
+
+    def display_error(self, error):
+        pass
 
 register_options_page(FingerprintingOptionsPage)

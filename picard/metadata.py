@@ -15,17 +15,22 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-
-import re
-import unicodedata
-from picard.plugin import ExtensionPoint
-from picard.similarity import similarity, similarity2
-from picard.util import format_time, load_release_type_scores
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301,
+# USA.
+from PyQt4.QtCore import QObject
+from picard import config, log
+from picard.plugin import PluginFunctions, PluginPriority
+from picard.similarity import similarity2
+from picard.util import (
+    linear_combination_of_weights,
+)
+from picard.mbxml import artist_credit_from_node
 
 MULTI_VALUED_JOINER = '; '
 
-class Metadata(object):
+
+class Metadata(dict):
+
     """List of metadata items with dict-like access."""
 
     __weights = [
@@ -36,27 +41,45 @@ class Metadata(object):
         ('totaltracks', 5),
     ]
 
+    multi_valued_joiner = MULTI_VALUED_JOINER
+
     def __init__(self):
         super(Metadata, self).__init__()
-        self._items = {}
         self.images = []
+        self.deleted_tags = set()
         self.length = 0
 
-    def add_image(self, mime, data):
-        self.images.append((mime, data))
+    def append_image(self, coverartimage):
+        self.images.append(coverartimage)
 
-    def __repr__(self):
-        return repr(self._items)
+    @property
+    def images_to_be_saved_to_tags(self):
+        if not config.setting["save_images_to_tags"]:
+            return ()
+        images = [img for img in self.images if img.can_be_saved_to_tags]
+        if config.setting["embed_only_one_front_image"]:
+            front_image = self.get_single_front_image(images)
+            if front_image:
+                return front_image
+        return images
+
+    def get_single_front_image(self, images=None):
+        if not images:
+            images = self.images
+        for img in images:
+            if img.is_front_image():
+                return [img]
+        return []
+
+    def remove_image(self, index):
+        self.images.pop(index)
 
     def compare(self, other):
         parts = []
-        total = 0
-        #print self["title"], " --- ", other["title"]
 
         if self.length and other.length:
             score = 1.0 - min(abs(self.length - other.length), 30000) / 30000.0
             parts.append((score, 8))
-            total += 8
 
         for name, weight in self.__weights:
             a = self[name]
@@ -73,37 +96,44 @@ class Metadata(object):
                 else:
                     score = similarity2(a, b)
                 parts.append((score, weight))
-                total += weight
-                #print name, score, weight
-        #print "******", reduce(lambda x, y: x + y[0] * y[1] / total, parts, 0.0)
-        return reduce(lambda x, y: x + y[0] * y[1] / total, parts, 0.0)
 
-    def compare_to_release(self, release, weights, config):
-        total = 0.0
+        return linear_combination_of_weights(parts)
+
+    def compare_to_release(self, release, weights):
+        """
+        Compare metadata to a MusicBrainz release. Produces a probability as a
+        linear combination of weights that the metadata matches a certain album.
+        """
+        parts = self.compare_to_release_parts(release, weights)
+        return (linear_combination_of_weights(parts), release)
+
+    def compare_to_release_parts(self, release, weights):
         parts = []
 
         if "album" in self:
             b = release.title[0].text
             parts.append((similarity2(self["album"], b), weights["album"]))
-            total += weights["album"]
+
+        if "albumartist" in self and "albumartist" in weights:
+            a = self["albumartist"]
+            b = artist_credit_from_node(release.artist_credit[0])[0]
+            parts.append((similarity2(a, b), weights["albumartist"]))
 
         if "totaltracks" in self:
-            a = int(self["totaltracks"])
-            if "title" in weights:
-                b = int(release.medium_list[0].medium[0].track_list[0].count)
+            try:
+                a = int(self["totaltracks"])
+            except ValueError:
+                pass
             else:
-                b = int(release.medium_list[0].track_count[0].text)
-            if a > b:
-                score = 0.0
-            elif a < b:
-                score = 0.3
-            else:
-                score = 1.0
-            parts.append((score, weights["totaltracks"]))
-            total += weights["totaltracks"]
+                if "title" in weights:
+                    b = int(release.medium_list[0].medium[0].track_list[0].count)
+                else:
+                    b = int(release.medium_list[0].track_count[0].text)
+                score = 0.0 if a > b else 0.3 if a < b else 1.0
+                parts.append((score, weights["totaltracks"]))
 
-        preferred_countries = config.setting["preferred_release_countries"].split("  ")
-        preferred_formats = config.setting["preferred_release_formats"].split("  ")
+        preferred_countries = config.setting["preferred_release_countries"]
+        preferred_formats = config.setting["preferred_release_formats"]
 
         total_countries = len(preferred_countries)
         if total_countries:
@@ -128,82 +158,127 @@ class Metadata(object):
                     except ValueError:
                         pass
                     subtotal += 1
-            if subtotal > 0: score /= subtotal
+            if subtotal > 0:
+                score /= subtotal
             parts.append((score, weights["format"]))
 
         if "releasetype" in weights:
-            type_scores = load_release_type_scores(config.setting["release_type_scores"])
+            type_scores = dict(config.setting["release_type_scores"])
             if 'release_group' in release.children and 'type' in release.release_group[0].attribs:
                 release_type = release.release_group[0].type
                 score = type_scores.get(release_type, type_scores.get('Other', 0.5))
             else:
                 score = 0.0
             parts.append((score, weights["releasetype"]))
-            total += weights["releasetype"]
 
-        return (total, parts)
+        rg = QObject.tagger.get_release_group_by_id(release.release_group[0].id)
+        if release.id in rg.loaded_albums:
+            parts.append((1.0, 6))
+
+        return parts
+
+    def compare_to_track(self, track, weights):
+        parts = []
+
+        if 'title' in self:
+            a = self['title']
+            b = track.title[0].text
+            parts.append((similarity2(a, b), weights["title"]))
+
+        if 'artist' in self:
+            a = self['artist']
+            b = artist_credit_from_node(track.artist_credit[0])[0]
+            parts.append((similarity2(a, b), weights["artist"]))
+
+        a = self.length
+        if a > 0 and 'length' in track.children:
+            b = int(track.length[0].text)
+            score = 1.0 - min(abs(a - b), 30000) / 30000.0
+            parts.append((score, weights["length"]))
+
+        releases = []
+        if "release_list" in track.children and "release" in track.release_list[0].children:
+            releases = track.release_list[0].release
+
+        if not releases:
+            sim = linear_combination_of_weights(parts)
+            return (sim, None, None, track)
+
+        result = (-1,)
+        for release in releases:
+            release_parts = self.compare_to_release_parts(release, weights)
+            sim = linear_combination_of_weights(parts + release_parts)
+            if sim > result[0]:
+                rg = release.release_group[0] if "release_group" in release.children else None
+                result = (sim, rg, release, track)
+
+        return result
 
     def copy(self, other):
-        self._items = {}
-        for key, values in other.rawitems():
-            self._items[key] = values[:]
-        self.images = other.images[:]
-        self.length = other.length
+        self.clear()
+        self.update(other)
 
     def update(self, other):
-        for name, values in other.rawitems():
-            self._items[name] = values[:]
+        for key in other.iterkeys():
+            self.set(key, other.getall(key)[:])
         if other.images:
             self.images = other.images[:]
         if other.length:
             self.length = other.length
 
+        self.deleted_tags.update(other.deleted_tags)      
+
     def clear(self):
-        self._items = {}
+        dict.clear(self)
         self.images = []
         self.length = 0
+        self.deleted_tags = set()
 
-    def __get(self, name, default=None):
-        values = self._items.get(name, None)
+    def getall(self, name):
+        return dict.get(self, name, [])
+
+    def get(self, name, default=None):
+        values = dict.get(self, name, None)
         if values:
-            if len(values) > 1:
-                return MULTI_VALUED_JOINER.join(values)
-            else:
-                return values[0]
+            return self.multi_valued_joiner.join(values)
         else:
             return default
 
-    def __set(self, name, values):
+    def __getitem__(self, name):
+        return self.get(name, u'')
+
+    def set(self, name, values):
+        dict.__setitem__(self, name, values)
+        if name in self.deleted_tags:
+            self.deleted_tags.remove(name)
+
+    def __setitem__(self, name, values):
         if not isinstance(values, list):
             values = [values]
-        values = [v for v in values if v or v == 0]
+        values = filter(None, map(unicode, values))
         if len(values):
-            self._items[name] = values
-
-    def getall(self, name):
-        return self._items.get(name, [])
-
-    def get(self, name, default=None):
-        return self.__get(name, default)
-
-    def __getitem__(self, name):
-        return self.__get(name, u'')
-
-    def set(self, name, value):
-        self.__set(name, value)
-
-    def __setitem__(self, name, value):
-        self.__set(name, value)
+            self.set(name, values)
+        else:
+            self.delete(name)
 
     def add(self, name, value):
         if value or value == 0:
-            self._items.setdefault(name, []).append(value)
+            self.setdefault(name, []).append(value)
+            if name in self.deleted_tags:
+                self.deleted_tags.remove(name)
 
-    def keys(self):
-        return self._items.keys()
+    def add_unique(self, name, value):
+        if value not in self.getall(name):
+            self.add(name, value)
+
+    def delete(self, name):
+        if name in self:
+            self.pop(name, None)
+        
+        self.deleted_tags.add(name)     
 
     def iteritems(self):
-        for name, values in self._items.iteritems():
+        for name, values in dict.iteritems(self):
             for value in values:
                 yield name, value
 
@@ -221,20 +296,12 @@ class Metadata(object):
         >>> m.rawitems()
         [("key1", ["value1", "value2"]), ("key2", ["value3"])]
         """
-        return self._items.items()
-
-    def __contains__(self, name):
-        return name in self._items
-
-    def __delitem__(self, name):
-        del self._items[name]
+        return dict.items(self)
 
     def apply_func(self, func):
-        new = Metadata()
         for key, values in self.rawitems():
             if not key.startswith("~"):
-                new[key] = map(func, values)
-        self.update(new)
+                self[key] = map(func, values)
 
     def strip_whitespace(self):
         """Strip leading/trailing whitespace.
@@ -249,29 +316,24 @@ class Metadata(object):
         """
         self.apply_func(lambda s: s.strip())
 
-    def pop(self, key):
-        return self._items.pop(key, None)
+
+_album_metadata_processors = PluginFunctions()
+_track_metadata_processors = PluginFunctions()
 
 
-_album_metadata_processors = ExtensionPoint()
-_track_metadata_processors = ExtensionPoint()
-
-
-def register_album_metadata_processor(function):
+def register_album_metadata_processor(function, priority=PluginPriority.NORMAL):
     """Registers new album-level metadata processor."""
-    _album_metadata_processors.register(function.__module__, function)
+    _album_metadata_processors.register(function.__module__, function, priority)
 
 
-def register_track_metadata_processor(function):
+def register_track_metadata_processor(function, priority=PluginPriority.NORMAL):
     """Registers new track-level metadata processor."""
-    _track_metadata_processors.register(function.__module__, function)
+    _track_metadata_processors.register(function.__module__, function, priority)
 
 
 def run_album_metadata_processors(tagger, metadata, release):
-    for processor in _album_metadata_processors:
-        processor(tagger, metadata, release)
+    _album_metadata_processors.run(tagger, metadata, release)
 
 
 def run_track_metadata_processors(tagger, metadata, release, track):
-    for processor in _track_metadata_processors:
-        processor(tagger, metadata, track, release)
+    _track_metadata_processors.run(tagger, metadata, track, release)

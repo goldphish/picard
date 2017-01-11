@@ -17,64 +17,116 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
+from __future__ import print_function
 import sys
 import os
+from collections import deque
 from PyQt4 import QtCore
-import picard
 from picard.util import thread
 
 
-def _stderr_receiver(prefix, msg):
-    sys.stderr.write("%s %s %s %s%s" % (prefix, str(QtCore.QThread.currentThreadId()), str(QtCore.QTime.currentTime().toString()), msg, os.linesep))
+LOG_INFO = 1
+LOG_WARNING = 2
+LOG_ERROR = 4
+LOG_DEBUG = 8
 
 
-class Log(object):
+class Logger(object):
 
-    def __init__(self):
-        self.entries = []
-        self.receivers = [_stderr_receiver]
-        picard.log.log = self
-        picard.log.debug = self.debug
-        picard.log.info = self.info
-        picard.log.warning = self.warning
-        picard.log.error = self.error
+    def __init__(self, maxlen=0):
+        self._receivers = []
+        self.maxlen = maxlen
+        self.reset()
 
-    def _message(self, prefix, message, args, kwargs):
+    def reset(self):
+        if self.maxlen > 0:
+            self.entries = deque(maxlen=self.maxlen)
+        else:
+            self.entries = []
+
+    def register_receiver(self, receiver):
+        self._receivers.append(receiver)
+
+    def unregister_receiver(self, receiver):
+        self._receivers.remove(receiver)
+
+    def message(self, level, message, *args):
+        if not self.log_level(level):
+            return
         if not (isinstance(message, str) or isinstance(message, unicode)):
             message = repr(message)
         if args:
             message = message % args
-        prefix = "%s" % (prefix,)
+        time = QtCore.QTime.currentTime()
         message = "%s" % (message,)
-        if isinstance(prefix, unicode):
-            prefix = prefix.encode("utf-8", "replace")
-        if isinstance(message, unicode):
-            message = message.encode("utf-8", "replace")
-        self.entries.append((prefix, message))
-        for func in self.receivers:
+        self.entries.append((level, time, message))
+        for func in self._receivers:
             try:
-                func(prefix, message)
-            except Exception, e:
+                thread.to_main(func, level, time, message)
+            except:
                 import traceback
                 traceback.print_exc()
 
-    def add_receiver(self, receiver):
-        self.receivers.append(receiver)
-
-    def debug(self, message, *args, **kwargs):
-        pass
-
-    def info(self, message, *args, **kwargs):
-        thread.proxy_to_main(self._message, "I:", message, args, kwargs)
-
-    def warning(self, message, *args, **kwargs):
-        thread.proxy_to_main(self._message, "W:", message, args, kwargs)
-
-    def error(self, message, *args, **kwargs):
-        thread.proxy_to_main(self._message, "E:", message, args, kwargs)
+    def log_level(self, level):
+        return True
 
 
-class DebugLog(Log):
+# main logger
+log_levels = LOG_INFO | LOG_WARNING | LOG_ERROR
 
-    def debug(self, message, *args, **kwargs):
-        thread.proxy_to_main(self._message, "D:", message, args, kwargs)
+main_logger = Logger(50000)
+main_logger.log_level = lambda level: log_levels & level
+
+
+def debug(message, *args):
+    main_logger.message(LOG_DEBUG, message, *args)
+
+
+def info(message, *args):
+    main_logger.message(LOG_INFO, message, *args)
+
+
+def warning(message, *args):
+    main_logger.message(LOG_WARNING, message, *args)
+
+
+def error(message, *args):
+    main_logger.message(LOG_ERROR, message, *args)
+
+
+_log_prefixes = {
+    LOG_INFO: 'I',
+    LOG_WARNING: 'W',
+    LOG_ERROR: 'E',
+    LOG_DEBUG: 'D',
+}
+
+
+def formatted_log_line(level, time, message, timefmt='hh:mm:ss',
+                       level_prefixes=_log_prefixes):
+    msg = "%s %s" % (time.toString(timefmt), message)
+    if level_prefixes:
+        return "%s: %s" % (level_prefixes[level], msg)
+    else:
+        return msg
+
+
+def _stderr_receiver(level, time, msg):
+    try:
+        sys.stderr.write(formatted_log_line(level, time, msg + os.linesep))
+    except UnicodeDecodeError:
+        import traceback
+        traceback.print_exc()
+        print("%r" % msg)
+
+
+main_logger.register_receiver(_stderr_receiver)
+
+
+# history of status messages
+history_logger = Logger(50000)
+history_logger.log_level = lambda level: log_levels & level
+
+
+def history_info(message, *args):
+    history_logger.message(LOG_INFO, message, *args)

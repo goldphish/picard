@@ -17,6 +17,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
+
 class Item(object):
 
     def can_save(self):
@@ -48,3 +49,9 @@ class Item(object):
 
     def can_browser_lookup(self):
         return True
+
+    def is_album_like(self):
+        return False
+
+    def load(self, priority=False, refresh=False):
+        pass

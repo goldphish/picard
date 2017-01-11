@@ -20,37 +20,48 @@
 import re
 import os.path
 from PyQt4 import QtCore, QtGui
-from picard.config import Option, TextOption
+from picard import config
 from picard.ui.util import StandardButton
+from picard.ui import PicardDialog
 from picard.ui.ui_tagsfromfilenames import Ui_TagsFromFileNamesDialog
 from picard.util.tags import display_tag_name
 
-class TagsFromFileNamesDialog(QtGui.QDialog):
+
+class TagsFromFileNamesDialog(PicardDialog):
 
     options = [
-        TextOption("persist", "tags_from_filenames_format", ""),
-        Option("persist", "tags_from_filenames_position", QtCore.QPoint(), QtCore.QVariant.toPoint),
-        Option("persist", "tags_from_filenames_size", QtCore.QSize(560, 400), QtCore.QVariant.toSize),
+        config.TextOption("persist", "tags_from_filenames_format", ""),
+        config.Option("persist", "tags_from_filenames_position", QtCore.QPoint()),
+        config.Option("persist", "tags_from_filenames_size", QtCore.QSize(560, 400)),
     ]
 
     def __init__(self, files, parent=None):
-        QtGui.QDialog.__init__(self, parent)
+        PicardDialog.__init__(self, parent)
         self.ui = Ui_TagsFromFileNamesDialog()
         self.ui.setupUi(self)
         items = [
+            "%artist%/%album%/%title%",
             "%artist%/%album%/%tracknumber% %title%",
             "%artist%/%album%/%tracknumber% - %title%",
-            "%artist%/%album - %tracknumber% - %title%",
+            "%artist%/%album% - %tracknumber% - %title%",
+            "%artist% - %album%/%title%",
+            "%artist% - %album%/%tracknumber% %title%",
+            "%artist% - %album%/%tracknumber% - %title%",
         ]
-        format = self.config.persist["tags_from_filenames_format"]
-        if format and format not in items:
-            items.insert(0, format)
+        format = config.persist["tags_from_filenames_format"]
+        if format not in items:
+            selected_index = 0
+            if format:
+                items.insert(0, format)
+        else:
+            selected_index = items.index(format)
         self.ui.format.addItems(items)
+        self.ui.format.setCurrentIndex(selected_index)
         self.ui.buttonbox.addButton(StandardButton(StandardButton.OK), QtGui.QDialogButtonBox.AcceptRole)
         self.ui.buttonbox.addButton(StandardButton(StandardButton.CANCEL), QtGui.QDialogButtonBox.RejectRole)
-        self.connect(self.ui.buttonbox, QtCore.SIGNAL('accepted()'), self, QtCore.SLOT('accept()'))
-        self.connect(self.ui.buttonbox, QtCore.SIGNAL('rejected()'), self, QtCore.SLOT('reject()'))
-        self.connect(self.ui.preview, QtCore.SIGNAL('clicked()'), self.preview)
+        self.ui.buttonbox.accepted.connect(self.accept)
+        self.ui.buttonbox.rejected.connect(self.reject)
+        self.ui.preview.clicked.connect(self.preview)
         self.ui.files.setHeaderLabels([_("File Name")])
         self.restoreWindowState()
         self.files = files
@@ -60,6 +71,7 @@ class TagsFromFileNamesDialog(QtGui.QDialog):
             item.setText(0, os.path.basename(file.filename))
             self.items.append(item)
         self._tag_re = re.compile("(%\w+%)")
+        self.numeric_tags = ('tracknumber', 'totaltracks', 'discnumber', 'totaldiscs')
 
     def parse_format(self):
         format = unicode(self.ui.format.currentText())
@@ -69,7 +81,7 @@ class TagsFromFileNamesDialog(QtGui.QDialog):
             if part.startswith('%') and part.endswith('%'):
                 name = part[1:-1]
                 columns.append(name)
-                if name in ('tracknumber', 'totaltracks', 'discnumber', 'totaldiscs'):
+                if name in self.numeric_tags:
                     format_re.append('(?P<' + name + '>\d+)')
                 elif name in ('date'):
                     format_re.append('(?P<' + name + '>\d+(?:-\d+(?:-\d+)?)?)')
@@ -77,16 +89,18 @@ class TagsFromFileNamesDialog(QtGui.QDialog):
                     format_re.append('(?P<' + name + '>[^/]*?)')
             else:
                 format_re.append(re.escape(part))
-        format_re.append('\\.(\\w+)$')
+        format_re.append(r'\.(\w+)$')
         format_re = re.compile("".join(format_re))
         return format_re, columns
 
     def match_file(self, file, format):
-        match = format.search('/'.join(os.path.split(file.filename)))
+        match = format.search(file.filename.replace('\\','/'))
         if match:
             result = {}
             for name, value in match.groupdict().iteritems():
                 value = value.strip()
+                if name in self.numeric_tags:
+                    value = value.lstrip("0")
                 if self.ui.replace_underscores.isChecked():
                     value = value.replace('_', ' ')
                 result[name] = value
@@ -112,7 +126,7 @@ class TagsFromFileNamesDialog(QtGui.QDialog):
             for name, value in metadata.iteritems():
                 file.metadata[name] = value
             file.update()
-        self.config.persist["tags_from_filenames_format"] = self.ui.format.currentText()
+        config.persist["tags_from_filenames_format"] = self.ui.format.currentText()
         self.saveWindowState()
         QtGui.QDialog.accept(self)
 
@@ -127,11 +141,11 @@ class TagsFromFileNamesDialog(QtGui.QDialog):
     def saveWindowState(self):
         pos = self.pos()
         if not pos.isNull():
-            self.config.persist["tags_from_filenames_position"] = pos
-        self.config.persist["tags_from_filenames_size"] = self.size()
+            config.persist["tags_from_filenames_position"] = pos
+        config.persist["tags_from_filenames_size"] = self.size()
 
     def restoreWindowState(self):
-        pos = self.config.persist["tags_from_filenames_position"]
+        pos = config.persist["tags_from_filenames_position"]
         if pos.x() > 0 and pos.y() > 0:
             self.move(pos)
-        self.resize(self.config.persist["tags_from_filenames_size"])
+        self.resize(config.persist["tags_from_filenames_size"])

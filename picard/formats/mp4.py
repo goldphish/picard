@@ -18,13 +18,17 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 from mutagen.mp4 import MP4, MP4Cover
+from picard import config, log
+from picard.coverart.image import TagCoverArtImage, CoverArtImageError
 from picard.file import File
 from picard.metadata import Metadata
 from picard.util import encode_filename
 
+
 class MP4File(File):
-    EXTENSIONS = [".m4a", ".m4b", ".m4p", ".mp4"]
+    EXTENSIONS = [".m4a", ".m4b", ".m4p", ".m4v", ".mp4"]
     NAME = "MPEG-4 Audio"
+    _File = MP4
 
     __text_tags = {
         "\xa9ART": "artist",
@@ -63,7 +67,7 @@ class MP4File(File):
     __r_int_tags = dict([(v, k) for k, v in __int_tags.iteritems()])
 
     __freeform_tags = {
-        "----:com.apple.iTunes:MusicBrainz Track Id": "musicbrainz_trackid",
+        "----:com.apple.iTunes:MusicBrainz Track Id": "musicbrainz_recordingid",
         "----:com.apple.iTunes:MusicBrainz Artist Id": "musicbrainz_artistid",
         "----:com.apple.iTunes:MusicBrainz Album Id": "musicbrainz_albumid",
         "----:com.apple.iTunes:MusicBrainz Album Artist Id": "musicbrainz_albumartistid",
@@ -75,6 +79,7 @@ class MP4File(File):
         "----:com.apple.iTunes:MusicBrainz TRM Id": "musicbrainz_trmid",
         "----:com.apple.iTunes:MusicBrainz Work Id": "musicbrainz_workid",
         "----:com.apple.iTunes:MusicBrainz Release Group Id": "musicbrainz_releasegroupid",
+        "----:com.apple.iTunes:MusicBrainz Release Track Id": "musicbrainz_trackid",
         "----:com.apple.iTunes:Acoustid Fingerprint": "acoustid_fingerprint",
         "----:com.apple.iTunes:Acoustid Id": "acoustid_id",
         "----:com.apple.iTunes:ASIN": "asin",
@@ -96,6 +101,9 @@ class MP4File(File):
         "----:com.apple.iTunes:MOOD": "mood",
         "----:com.apple.iTunes:SCRIPT": "script",
         "----:com.apple.iTunes:LANGUAGE": "language",
+        "----:com.apple.iTunes:ARTISTS": "artists",
+        "----:com.apple.iTunes:WORK": "work",
+        "----:com.apple.iTunes:initialkey": "key",
     }
     __r_freeform_tags = dict([(v, k) for k, v in __freeform_tags.iteritems()])
 
@@ -103,13 +111,14 @@ class MP4File(File):
                               "totaldiscs", "totaltracks")
 
     def _load(self, filename):
-        self.log.debug("Loading file %r", filename)
+        log.debug("Loading file %r", filename)
         file = MP4(encode_filename(filename))
-        if file.tags is None:
+        tags = file.tags
+        if tags is None:
             file.add_tags()
 
         metadata = Metadata()
-        for name, values in file.tags.items():
+        for name, values in tags.items():
             if name in self.__text_tags:
                 for value in values:
                     metadata.add(self.__text_tags[name], value)
@@ -135,69 +144,116 @@ class MP4File(File):
                 metadata["totaldiscs"] = str(values[0][1])
             elif name == "covr":
                 for value in values:
-                    if value.format == value.FORMAT_JPEG:
-                        metadata.add_image("image/jpeg", value)
-                    elif value.format == value.FORMAT_PNG:
-                        metadata.add_image("image/png", value)
+                    if value.imageformat not in (value.FORMAT_JPEG,
+                                                 value.FORMAT_PNG):
+                        continue
+                    try:
+                        coverartimage = TagCoverArtImage(
+                            file=filename,
+                            tag=name,
+                            data=value,
+                        )
+                    except CoverArtImageError as e:
+                        log.error('Cannot load image from %r: %s' %
+                                  (filename, e))
+                    else:
+                        metadata.append_image(coverartimage)
 
         self._info(metadata, file)
         return metadata
 
-    def _save(self, filename, metadata, settings):
-        self.log.debug("Saving file %r", filename)
+    def _save(self, filename, metadata):
+        log.debug("Saving file %r", filename)
         file = MP4(encode_filename(self.filename))
-        if file.tags is None:
+        tags = file.tags
+        if tags is None:
             file.add_tags()
 
-        if settings["clear_existing_tags"]:
-            file.tags.clear()
+        if config.setting["clear_existing_tags"]:
+            tags.clear()
 
         for name, values in metadata.rawitems():
             if name.startswith('lyrics:'):
                 name = 'lyrics'
             if name in self.__r_text_tags:
-                file.tags[self.__r_text_tags[name]] = values
+                tags[self.__r_text_tags[name]] = values
             elif name in self.__r_bool_tags:
-                file.tags[self.__r_bool_tags[name]] = (values[0] == '1')
+                tags[self.__r_bool_tags[name]] = (values[0] == '1')
             elif name in self.__r_int_tags:
                 try:
-                    file.tags[self.__r_int_tags[name]] = [int(value) for value in values]
+                    tags[self.__r_int_tags[name]] = [int(value) for value in values]
                 except ValueError:
                     pass
             elif name in self.__r_freeform_tags:
                 values = [v.encode("utf-8") for v in values]
-                file.tags[self.__r_freeform_tags[name]] = values
+                tags[self.__r_freeform_tags[name]] = values
             elif name == "musicip_fingerprint":
-                file.tags["----:com.apple.iTunes:fingerprint"] = ["MusicMagic Fingerprint%s" % str(v) for v in values]
+                tags["----:com.apple.iTunes:fingerprint"] = ["MusicMagic Fingerprint%s" % str(v) for v in values]
 
         if "tracknumber" in metadata:
             if "totaltracks" in metadata:
-                file.tags["trkn"] = [(int(metadata["tracknumber"]),
-                                      int(metadata["totaltracks"]))]
+                tags["trkn"] = [(int(metadata["tracknumber"]),
+                                 int(metadata["totaltracks"]))]
             else:
-                file.tags["trkn"] = [(int(metadata["tracknumber"]), 0)]
+                tags["trkn"] = [(int(metadata["tracknumber"]), 0)]
 
         if "discnumber" in metadata:
             if "totaldiscs" in metadata:
-                file.tags["disk"] = [(int(metadata["discnumber"]),
-                                      int(metadata["totaldiscs"]))]
+                tags["disk"] = [(int(metadata["discnumber"]),
+                                 int(metadata["totaldiscs"]))]
             else:
-                file.tags["disk"] = [(int(metadata["discnumber"]), 0)]
+                tags["disk"] = [(int(metadata["discnumber"]), 0)]
 
-        if settings['save_images_to_tags']:
-            covr = []
-            for mime, data in metadata.images:
-                if mime == "image/jpeg":
-                    covr.append(MP4Cover(data, MP4Cover.FORMAT_JPEG))
-                elif mime == "image/png":
-                    covr.append(MP4Cover(data, MP4Cover.FORMAT_PNG))
-            if covr:
-                file.tags["covr"] = covr
+        covr = []
+        for image in metadata.images_to_be_saved_to_tags:
+            if image.mimetype == "image/jpeg":
+                covr.append(MP4Cover(image.data, MP4Cover.FORMAT_JPEG))
+            elif image.mimetype == "image/png":
+                covr.append(MP4Cover(image.data, MP4Cover.FORMAT_PNG))
+        if covr:
+            tags["covr"] = covr
+
+        self._remove_deleted_tags(metadata, tags)
 
         file.save()
 
+    def _remove_deleted_tags(self, metadata, tags):
+        """Remove the tags from the file that were deleted in the UI"""
+        for tag in metadata.deleted_tags:
+            real_name = self._get_tag_name(tag)
+            if real_name and real_name in tags:
+                if tag not in ("totaltracks", "totaldiscs"):
+                    del tags[real_name]
+
     def supports_tag(self, name):
-        return name in self.__r_text_tags or name in self.__r_bool_tags\
-            or name in self.__r_freeform_tags\
-            or name in self.__other_supported_tags\
-            or name.startswith('lyrics:')
+        return (name in self.__r_text_tags
+                or name in self.__r_bool_tags
+                or name in self.__r_freeform_tags
+                or name in self.__other_supported_tags
+                or name.startswith('lyrics:')
+                or name in ('~length', 'musicip_fingerprint'))
+
+    def _get_tag_name(self, name):
+        if name.startswith('lyrics:'):
+            return 'lyrics'
+        if name in self.__r_text_tags:
+            return self.__r_text_tags[name]
+        elif name in self.__r_bool_tags:
+            return self.__r_bool_tags[name]
+        elif name in self.__r_int_tags:
+            return self.__r_int_tags[name]
+        elif name in self.__r_freeform_tags:
+            return self.__r_freeform_tags[name]
+        elif name == "musicip_fingerprint":
+            return "----:com.apple.iTunes:fingerprint"
+        elif name in ("tracknumber", "totaltracks"):
+            return "trkn"
+        elif name in ("discnumber", "totaldiscs"):
+            return "disk"
+        else:
+            return None
+
+    def _info(self, metadata, file):
+        super(MP4File, self)._info(metadata, file)
+        if hasattr(file.info, 'codec_description') and file.info.codec_description:
+            metadata['~format'] = "%s (%s)" % (metadata['~format'], file.info.codec_description)

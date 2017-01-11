@@ -18,9 +18,14 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 from PyQt4 import QtCore, QtGui
-from picard.config import BoolOption, TextOption
+from picard import config
 from picard.ui.options import OptionsPage, register_options_page
 from picard.ui.ui_options_cover import Ui_CoverOptionsPage
+from picard.coverart.providers import cover_art_providers, is_provider_enabled
+from picard.ui.sortablecheckboxlist import (
+    SortableCheckboxListWidget,
+    SortableCheckboxListItem
+)
 
 
 class CoverOptionsPage(OptionsPage):
@@ -32,35 +37,73 @@ class CoverOptionsPage(OptionsPage):
     ACTIVE = True
 
     options = [
-        BoolOption("setting", "save_images_to_tags", True),
-        BoolOption("setting", "save_images_to_files", False),
-        TextOption("setting", "cover_image_filename", "cover"),
-        BoolOption("setting", "save_images_overwrite", False),
+        config.BoolOption("setting", "save_images_to_tags", True),
+        config.BoolOption("setting", "embed_only_one_front_image", True),
+        config.BoolOption("setting", "save_images_to_files", False),
+        config.TextOption("setting", "cover_image_filename", "cover"),
+        config.BoolOption("setting", "save_images_overwrite", False),
+        config.ListOption("setting", "ca_providers", [
+            ('Cover Art Archive', True),
+            ('Amazon', True),
+            ('Whitelist', True),
+            ('CaaReleaseGroup', False),
+            ('Local', False),
+        ]),
     ]
 
     def __init__(self, parent=None):
         super(CoverOptionsPage, self).__init__(parent)
         self.ui = Ui_CoverOptionsPage()
         self.ui.setupUi(self)
-        self.connect(self.ui.save_images_to_files, QtCore.SIGNAL("clicked()"), self.update_filename)
+        self.ui.save_images_to_files.clicked.connect(self.update_filename)
+        self.ui.save_images_to_tags.clicked.connect(self.update_save_images_to_tags)
+
+    def load_cover_art_providers(self):
+        """Load available providers, initialize provider-specific options, restore state of each
+        """
+        widget = SortableCheckboxListWidget()
+        providers = cover_art_providers()
+        for provider in providers:
+            try:
+                title = _(provider.TITLE)
+            except AttributeError:
+                title = provider.NAME
+            checked = is_provider_enabled(provider.NAME)
+            widget.addItem(SortableCheckboxListItem(title, checked=checked, data=provider.NAME))
+
+        def update_providers_options(items):
+            config.setting['ca_providers'] = [(item.data, item.checked)
+                                              for item in items]
+        widget.changed.connect(update_providers_options)
+        self.ui.ca_providers_list.insertWidget(0, widget)
 
     def load(self):
-        self.ui.save_images_to_tags.setChecked(self.config.setting["save_images_to_tags"])
-        self.ui.save_images_to_files.setChecked(self.config.setting["save_images_to_files"])
-        self.ui.cover_image_filename.setText(self.config.setting["cover_image_filename"])
-        self.ui.save_images_overwrite.setChecked(self.config.setting["save_images_overwrite"])
-        self.update_filename()
+        self.ui.save_images_to_tags.setChecked(config.setting["save_images_to_tags"])
+        self.ui.cb_embed_front_only.setChecked(config.setting["embed_only_one_front_image"])
+        self.ui.save_images_to_files.setChecked(config.setting["save_images_to_files"])
+        self.ui.cover_image_filename.setText(config.setting["cover_image_filename"])
+        self.ui.save_images_overwrite.setChecked(config.setting["save_images_overwrite"])
+        self.load_cover_art_providers()
+        self.update_all()
 
     def save(self):
-        self.config.setting["save_images_to_tags"] = self.ui.save_images_to_tags.isChecked()
-        self.config.setting["save_images_to_files"] = self.ui.save_images_to_files.isChecked()
-        self.config.setting["cover_image_filename"] = unicode(self.ui.cover_image_filename.text())
-        self.config.setting["save_images_overwrite"] = self.ui.save_images_overwrite.isChecked()
+        config.setting["save_images_to_tags"] = self.ui.save_images_to_tags.isChecked()
+        config.setting["embed_only_one_front_image"] = self.ui.cb_embed_front_only.isChecked()
+        config.setting["save_images_to_files"] = self.ui.save_images_to_files.isChecked()
+        config.setting["cover_image_filename"] = unicode(self.ui.cover_image_filename.text())
+        config.setting["save_images_overwrite"] = self.ui.save_images_overwrite.isChecked()
+
+    def update_all(self):
+        self.update_filename()
+        self.update_save_images_to_tags()
 
     def update_filename(self):
         enabled = self.ui.save_images_to_files.isChecked()
         self.ui.cover_image_filename.setEnabled(enabled)
         self.ui.save_images_overwrite.setEnabled(enabled)
 
+    def update_save_images_to_tags(self):
+        enabled = self.ui.save_images_to_tags.isChecked()
+        self.ui.cb_embed_front_only.setEnabled(enabled)
 
 register_options_page(CoverOptionsPage)

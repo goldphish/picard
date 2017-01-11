@@ -18,9 +18,9 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 from PyQt4 import QtCore, QtGui
-from picard.config import Option
-from picard.plugin import ExtensionPoint
+from picard import config
 from picard.util import webbrowser2
+from picard.ui import PicardDialog
 from picard.ui.util import StandardButton
 from picard.ui.options import (
     about,
@@ -34,10 +34,9 @@ from picard.ui.options import (
     matching,
     metadata,
     releases,
-    moving,
     renaming,
     plugins,
-    proxy,
+    network,
     scripting,
     tags,
     fingerprinting,
@@ -46,12 +45,12 @@ from picard.ui.options import (
 )
 
 
-class OptionsDialog(QtGui.QDialog):
+class OptionsDialog(PicardDialog):
 
     options = [
-        Option("persist", "options_position", QtCore.QPoint(), QtCore.QVariant.toPoint),
-        Option("persist", "options_size", QtCore.QSize(560, 400), QtCore.QVariant.toSize),
-        Option("persist", "options_splitter", QtCore.QByteArray(), QtCore.QVariant.toByteArray),
+        config.Option("persist", "options_position", QtCore.QPoint()),
+        config.Option("persist", "options_size", QtCore.QSize(560, 400)),
+        config.Option("persist", "options_splitter", QtCore.QByteArray()),
     ]
 
     def add_pages(self, parent, default_page, parent_item):
@@ -74,18 +73,26 @@ class OptionsDialog(QtGui.QDialog):
             self.default_item = items[0]
 
     def __init__(self, default_page=None, parent=None):
-        QtGui.QDialog.__init__(self, parent)
+        PicardDialog.__init__(self, parent)
 
         from picard.ui.ui_options import Ui_Dialog
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
 
+        self.ui.reset_all_button = QtGui.QPushButton(_("&Restore all Defaults"))
+        self.ui.reset_button = QtGui.QPushButton(_("Restore &Defaults"))
+
         self.ui.buttonbox.addButton(StandardButton(StandardButton.OK), QtGui.QDialogButtonBox.AcceptRole)
         self.ui.buttonbox.addButton(StandardButton(StandardButton.CANCEL), QtGui.QDialogButtonBox.RejectRole)
         self.ui.buttonbox.addButton(StandardButton(StandardButton.HELP), QtGui.QDialogButtonBox.HelpRole)
-        self.connect(self.ui.buttonbox, QtCore.SIGNAL('accepted()'), self, QtCore.SLOT('accept()'))
-        self.connect(self.ui.buttonbox, QtCore.SIGNAL('rejected()'), self, QtCore.SLOT('reject()'))
-        self.connect(self.ui.buttonbox, QtCore.SIGNAL('helpRequested()'), self.help)
+        self.ui.buttonbox.addButton(self.ui.reset_all_button, QtGui.QDialogButtonBox.ActionRole)
+        self.ui.buttonbox.addButton(self.ui.reset_button, QtGui.QDialogButtonBox.ActionRole)
+
+        self.ui.buttonbox.accepted.connect(self.accept)
+        self.ui.buttonbox.rejected.connect(self.reject)
+        self.ui.reset_all_button.clicked.connect(self.confirm_reset_all)
+        self.ui.reset_button.clicked.connect(self.confirm_reset)
+        self.ui.buttonbox.helpRequested.connect(self.help)
 
         self.pages = []
         for Page in page_classes:
@@ -98,7 +105,7 @@ class OptionsDialog(QtGui.QDialog):
 
         self.ui.pages_tree.setHeaderLabels([""])
         self.ui.pages_tree.header().hide()
-        self.connect(self.ui.pages_tree, QtCore.SIGNAL("itemSelectionChanged()"), self.switch_page)
+        self.ui.pages_tree.itemSelectionChanged.connect(self.switch_page)
 
         self.restoreWindowState()
 
@@ -113,13 +120,13 @@ class OptionsDialog(QtGui.QDialog):
             self.ui.pages_stack.setCurrentWidget(page)
 
     def help(self):
-        webbrowser2.open('http://musicbrainz.org/doc/Picard_Documentation/Options')
+        webbrowser2.goto('doc_options')
 
     def accept(self):
         for page in self.pages:
             try:
                 page.check()
-            except OptionsCheckError, e:
+            except OptionsCheckError as e:
                 self.ui.pages_tree.setCurrentItem(self.page_to_item[page.NAME])
                 page.display_error(e)
                 return
@@ -135,13 +142,52 @@ class OptionsDialog(QtGui.QDialog):
     def saveWindowState(self):
         pos = self.pos()
         if not pos.isNull():
-            self.config.persist["options_position"] = pos
-        self.config.persist["options_size"] = self.size()
-        self.config.persist["options_splitter"] = self.ui.splitter.saveState()
+            config.persist["options_position"] = pos
+        config.persist["options_size"] = self.size()
+        config.persist["options_splitter"] = self.ui.splitter.saveState()
 
     def restoreWindowState(self):
-        pos = self.config.persist["options_position"]
+        pos = config.persist["options_position"]
         if pos.x() > 0 and pos.y() > 0:
             self.move(pos)
-        self.resize(self.config.persist["options_size"])
-        self.ui.splitter.restoreState(self.config.persist["options_splitter"])
+        self.resize(config.persist["options_size"])
+        self.ui.splitter.restoreState(config.persist["options_splitter"])
+
+    def restore_all_defaults(self):
+        for page in self.pages:
+            self._restore_default(page)
+
+    def restore_defaults(self):
+        self._restore_default(self.ui.pages_stack.currentWidget())
+
+    def _restore_default(self, page):
+        try:
+            options = page.options
+        except AttributeError:
+            return
+        old_options = {}
+        for option in options:
+            if option.section == 'setting':
+                old_options[option.name] = config.setting[option.name]
+                config.setting[option.name] = option.default
+        page.load()
+        # Restore the config values incase the user doesn't save after restoring defaults
+        for key in old_options:
+            config.setting[key] = old_options[key]
+        return
+
+    def confirm_reset(self):
+        msg = _("You are about to reset your options for this page.\nAre you sure:")
+        self._show_dialog(msg, self.restore_defaults)
+
+    def confirm_reset_all(self):
+        msg = _("Warning! This will reset all of your settings.\nAre you sure:")
+        self._show_dialog(msg, self.restore_all_defaults)
+
+    def _show_dialog(self, msg, function):
+        message_box = QtGui.QMessageBox()
+        message_box.setIcon(QtGui.QMessageBox.Warning)
+        message_box.setText(msg)
+        message_box.setStandardButtons(QtGui.QMessageBox.Ok | QtGui.QMessageBox.Cancel)
+        if message_box.exec_() == QtGui.QMessageBox.Ok:
+            function()

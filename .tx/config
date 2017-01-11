@@ -1,0 +1,20 @@
+[main]
+host = https://www.transifex.com
+
+[musicbrainz.picard]
+file_filter = po/<lang>.po
+source_file = po/picard.pot
+source_lang = en
+type = PO
+
+[musicbrainz.countries]
+file_filter = po/countries/<lang>.po
+source_file = po/countries/countries.pot
+source_lang = en
+type = PO
+
+[musicbrainz.attributes]
+file_filter = po/attributes/<lang>.po
+source_file = po/attributes/attributes.pot
+source_lang = en
+type = PO

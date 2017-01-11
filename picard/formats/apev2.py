@@ -17,18 +17,24 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
+from __future__ import absolute_import
+import re
 import mutagen.apev2
 import mutagen.monkeysaudio
 import mutagen.musepack
 import mutagen.wavpack
 import mutagen.optimfrog
-import mutagenext.tak
+from .mutagenext import tak
+from picard import config, log
+from picard.coverart.image import TagCoverArtImage, CoverArtImageError
 from picard.file import File
 from picard.metadata import Metadata
-from picard.util import encode_filename, sanitize_date, mimetype
+from picard.util import encode_filename, sanitize_date
 from os.path import isfile
 
+
 class APEv2File(File):
+
     """Generic APEv2-based file."""
     _File = None
 
@@ -45,11 +51,13 @@ class APEv2File(File):
         "Language": "language",
         "MUSICBRAINZ_ALBUMSTATUS": "releasestatus",
         "MUSICBRAINZ_ALBUMTYPE": "releasetype",
+        "musicbrainz_trackid": "musicbrainz_recordingid",
+        "musicbrainz_releasetrackid": "musicbrainz_trackid",
     }
     __rtranslate = dict([(v, k) for k, v in __translate.iteritems()])
 
     def _load(self, filename):
-        self.log.debug("Loading file %r", filename)
+        log.debug("Loading file %r", filename)
         file = self._File(encode_filename(filename))
         metadata = Metadata()
         if file.tags:
@@ -57,8 +65,18 @@ class APEv2File(File):
                 if origname.lower().startswith("cover art") and values.kind == mutagen.apev2.BINARY:
                     if '\0' in values.value:
                         descr, data = values.value.split('\0', 1)
-                        mime = mimetype.get_from_data(data, descr, 'image/jpeg')
-                        metadata.add_image(mime, data)
+                        try:
+                            coverartimage = TagCoverArtImage(
+                                file=filename,
+                                tag=origname,
+                                data=data,
+                            )
+                        except CoverArtImageError as e:
+                            log.error('Cannot load image from %r: %s' %
+                                      (filename, e))
+                        else:
+                            metadata.append_image(coverartimage)
+
                 # skip EXTERNAL and BINARY values
                 if values.kind != mutagen.apev2.TEXT:
                     continue
@@ -94,16 +112,16 @@ class APEv2File(File):
         self._info(metadata, file)
         return metadata
 
-    def _save(self, filename, metadata, settings):
+    def _save(self, filename, metadata):
         """Save metadata to the file."""
-        self.log.debug("Saving file %r", filename)
+        log.debug("Saving file %r", filename)
         try:
             tags = mutagen.apev2.APEv2(encode_filename(filename))
         except mutagen.apev2.APENoHeaderError:
             tags = mutagen.apev2.APEv2()
-        if settings["clear_existing_tags"]:
+        if config.setting["clear_existing_tags"]:
             tags.clear()
-        elif settings['save_images_to_tags'] and metadata.images:
+        elif metadata.images_to_be_saved_to_tags:
             for name, value in tags.items():
                 if name.lower().startswith('cover art') and value.kind == mutagen.apev2.BINARY:
                     del tags[name]
@@ -140,46 +158,95 @@ class APEv2File(File):
             temp.setdefault(name, []).append(value)
         for name, values in temp.items():
             tags[str(name)] = values
-        if settings['save_images_to_tags']:
-            for mime, data in metadata.images:
-                cover_filename = 'Cover Art (Front)'
-                cover_filename += mimetype.get_extension(mime, '.jpg')
-                tags['Cover Art (Front)'] = cover_filename + '\0' + data
-                break # can't save more than one item with the same name
-                      # (mp3tags does this, but it's against the specs)
+        for image in metadata.images_to_be_saved_to_tags:
+            cover_filename = 'Cover Art (Front)'
+            cover_filename += image.extension
+            tags['Cover Art (Front)'] = mutagen.apev2.APEValue(cover_filename + '\0' + image.data, mutagen.apev2.BINARY)
+            break
+            # can't save more than one item with the same name
+            # (mp3tags does this, but it's against the specs)
+
+        self._remove_deleted_tags(metadata, tags)
+
         tags.save(encode_filename(filename))
 
+    def _remove_deleted_tags(self, metadata, tags):
+        """Remove the tags from the file that were deleted in the UI"""
+        for tag in metadata.deleted_tags:
+            real_name = str(self._get_tag_name(tag))
+            if real_name in ('Lyrics', 'Comment', 'Performer'):
+                tag_type = "\(%s\)" % tag.split(':', 1)[1]
+                for item in tags.get(real_name):
+                    if re.search(tag_type, item):
+                        tags.get(real_name).remove(item)
+            elif tag in ('totaltracks', 'totaldiscs'):
+                tagstr = real_name.lower() + 'number'
+                try:
+                    tags[real_name] = metadata[tagstr]
+                except KeyError:
+                    pass
+            else:
+                del tags[real_name]
+
+    def _get_tag_name(self, name):
+        if name.startswith('lyrics:'):
+            return 'Lyrics'
+        elif name == 'date':
+            return 'Year'
+        elif name in ('tracknumber', 'totaltracks'):
+            return 'Track'
+        elif name in ('discnumber', 'totaldiscs'):
+            return 'Disc'
+        elif name.startswith('performer:') or name.startswith('comment:'):
+            return name.split(':', 1)[0].title()
+        elif name in self.__rtranslate:
+            return self.__rtranslate[name]
+        else:
+            return name.title()
+
+    def supports_tag(self, name):
+        return bool(name)
+
+
 class MusepackFile(APEv2File):
+
     """Musepack file."""
     EXTENSIONS = [".mpc", ".mp+"]
     NAME = "Musepack"
     _File = mutagen.musepack.Musepack
+
     def _info(self, metadata, file):
         super(MusepackFile, self)._info(metadata, file)
         metadata['~format'] = "Musepack, SV%d" % file.info.version
 
+
 class WavPackFile(APEv2File):
+
     """WavPack file."""
     EXTENSIONS = [".wv"]
     NAME = "WavPack"
     _File = mutagen.wavpack.WavPack
+
     def _info(self, metadata, file):
         super(WavPackFile, self)._info(metadata, file)
         metadata['~format'] = self.NAME
 
-    def _save_and_rename(self, old_filename, metadata, settings):
+    def _save_and_rename(self, old_filename, metadata):
         """Includes an additional check for WavPack correction files"""
         wvc_filename = old_filename.replace(".wv", ".wvc")
         if isfile(wvc_filename):
-            if settings["rename_files"] or settings["move_files"]:
-                self._rename(wvc_filename, metadata, settings)
-        return File._save_and_rename(self, old_filename, metadata, settings)
+            if config.setting["rename_files"] or config.setting["move_files"]:
+                self._rename(wvc_filename, metadata)
+        return File._save_and_rename(self, old_filename, metadata)
+
 
 class OptimFROGFile(APEv2File):
+
     """OptimFROG file."""
     EXTENSIONS = [".ofr", ".ofs"]
     NAME = "OptimFROG"
     _File = mutagen.optimfrog.OptimFROG
+
     def _info(self, metadata, file):
         super(OptimFROGFile, self)._info(metadata, file)
         if file.filename.lower().endswith(".ofs"):
@@ -187,20 +254,26 @@ class OptimFROGFile(APEv2File):
         else:
             metadata['~format'] = "OptimFROG Lossless Audio"
 
+
 class MonkeysAudioFile(APEv2File):
+
     """Monkey's Audio file."""
     EXTENSIONS = [".ape"]
     NAME = "Monkey's Audio"
     _File = mutagen.monkeysaudio.MonkeysAudio
+
     def _info(self, metadata, file):
         super(MonkeysAudioFile, self)._info(metadata, file)
         metadata['~format'] = self.NAME
 
+
 class TAKFile(APEv2File):
+
     """TAK file."""
     EXTENSIONS = [".tak"]
     NAME = "Tom's lossless Audio Kompressor"
-    _File = mutagenext.tak.TAK
+    _File = tak.TAK
+
     def _info(self, metadata, file):
         super(TAKFile, self)._info(metadata, file)
         metadata['~format'] = self.NAME

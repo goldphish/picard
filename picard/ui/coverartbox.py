@@ -18,14 +18,18 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import os
+from functools import partial
 from PyQt4 import QtCore, QtGui, QtNetwork
+from picard import config, log
 from picard.album import Album
+from picard.coverart.image import CoverArtImage, CoverArtImageError
 from picard.track import Track
 from picard.file import File
-from picard.util import webbrowser2, encode_filename
+from picard.util import encode_filename
 
 
 class ActiveLabel(QtGui.QLabel):
+
     """Clickable QLabel."""
 
     clicked = QtCore.pyqtSignal()
@@ -35,7 +39,7 @@ class ActiveLabel(QtGui.QLabel):
         QtGui.QLabel.__init__(self, *args)
         self.setMargin(0)
         self.setActive(active)
-        self.setAcceptDrops(True)
+        self.setAcceptDrops(False)
 
     def setActive(self, active):
         self.active = active
@@ -45,12 +49,14 @@ class ActiveLabel(QtGui.QLabel):
             self.setCursor(QtGui.QCursor())
 
     def mouseReleaseEvent(self, event):
-        if self.active:
+        if self.active and event.button() == QtCore.Qt.LeftButton:
             self.clicked.emit()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        for url in event.mimeData().urls():
+            if url.scheme() in ('http', 'file'):
+                event.acceptProposedAction()
+                break
 
     def dropEvent(self, event):
         accepted = False
@@ -99,12 +105,17 @@ class CoverArtBox(QtGui.QGroupBox):
         if self.data:
             if pixmap is None:
                 pixmap = QtGui.QPixmap()
-                pixmap.loadFromData(self.data[1])
+                pixmap.loadFromData(self.data.data)
             if not pixmap.isNull():
+                offx, offy, w, h = (1, 1, 121, 121)
                 cover = QtGui.QPixmap(self.shadow)
-                pixmap = pixmap.scaled(121, 121, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+                pixmap = pixmap.scaled(w, h, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
                 painter = QtGui.QPainter(cover)
-                painter.drawPixmap(1, 1, pixmap)
+                bgcolor = QtGui.QColor.fromRgb(0, 0, 0, 128)
+                painter.fillRect(QtCore.QRectF(offx, offy, w, h), bgcolor)
+                x = offx + (w - pixmap.width()) / 2
+                y = offy + (h - pixmap.height()) / 2
+                painter.drawPixmap(x, y, pixmap)
                 painter.end()
         self.coverArt.setPixmap(cover)
 
@@ -112,8 +123,18 @@ class CoverArtBox(QtGui.QGroupBox):
         self.item = item
         data = None
         if metadata and metadata.images:
-            data = metadata.images[0]
+            for image in metadata.images:
+                if image.is_front_image():
+                    data = image
+                    break
+            else:
+                # There's no front image, choose the first one available
+                data = metadata.images[0]
         self.__set_data(data)
+        if item and metadata:
+            self.coverArt.setAcceptDrops(True)
+        else:
+            self.coverArt.setAcceptDrops(False)
         release = None
         if metadata:
             release = metadata.get("musicbrainz_albumid", None)
@@ -126,10 +147,8 @@ class CoverArtBox(QtGui.QGroupBox):
         self.release = release
 
     def open_release_page(self):
-        host = self.config.setting["server_host"]
-        port = self.config.setting["server_port"]
-        url = "http://%s:%s/release/%s" % (host, port, self.release)
-        webbrowser2.open(url)
+        lookup = self.tagger.get_file_lookup()
+        lookup.albumLookup(self.release)
 
     def fetch_remote_image(self, url):
         if self.item is None:
@@ -139,42 +158,52 @@ class CoverArtBox(QtGui.QGroupBox):
             if url.hasQuery():
                 path += '?' + url.encodedQuery()
             self.tagger.xmlws.get(url.encodedHost(), url.port(80), path,
-                self.on_remote_image_fetched, xml=False,
-                priority=True, important=True)
+                                  partial(self.on_remote_image_fetched, url),
+                                  xml=False,
+                                  priority=True, important=True)
         elif url.scheme() == 'file':
             path = encode_filename(unicode(url.toLocalFile()))
             if os.path.exists(path):
-                f = open(path, 'rb')
-                mime = 'image/png' if '.png' in path.lower() else 'image/jpeg'
-                data = f.read()
-                f.close()
-                self.load_remote_image(mime, data)
+                mime = 'image/png' if path.lower().endswith('.png') else 'image/jpeg'
+                with open(path, 'rb') as f:
+                    data = f.read()
+                self.load_remote_image(url, mime, data)
 
-    def on_remote_image_fetched(self, data, reply, error):
-        mime = str(reply.header(QtNetwork.QNetworkRequest.ContentTypeHeader).toString())
-        if mime not in ('image/jpeg', 'image/png'):
-            self.log.warning("Can't load image with MIME-Type %s", mime)
+    def on_remote_image_fetched(self, url, data, reply, error):
+        mime = reply.header(QtNetwork.QNetworkRequest.ContentTypeHeader)
+        if mime in ('image/jpeg', 'image/png'):
+            self.load_remote_image(url, mime, data)
+        elif reply.url().hasQueryItem("imgurl"):
+            # This may be a google images result, try to get the URL which is encoded in the query
+            url = QtCore.QUrl(reply.url().queryItemValue("imgurl"))
+            self.fetch_remote_image(url)
+        else:
+            log.warning("Can't load image with MIME-Type %s", mime)
+
+    def load_remote_image(self, url, mime, data):
+        try:
+            coverartimage = CoverArtImage(
+                url=url.toString(),
+                data=data
+            )
+        except CoverArtImageError as e:
+            log.warning("Can't load image: %s" % unicode(e))
             return
-        return self.load_remote_image(mime, data)
-
-    def load_remote_image(self, mime, data):
         pixmap = QtGui.QPixmap()
-        if not pixmap.loadFromData(data):
-            self.log.warning("Can't load image")
-            return
+        pixmap.loadFromData(data)
         self.__set_data([mime, data], pixmap=pixmap)
         if isinstance(self.item, Album):
             album = self.item
-            album.metadata.add_image(mime, data)
+            album.metadata.append_image(coverartimage)
             for track in album.tracks:
-                track.metadata.add_image(mime, data)
+                track.metadata.append_image(coverartimage)
             for file in album.iterfiles():
-                file.metadata.add_image(mime, data)
+                file.metadata.append_image(coverartimage)
         elif isinstance(self.item, Track):
             track = self.item
-            track.metadata.add_image(mime, data)
+            track.metadata.append_image(coverartimage)
             for file in track.iterfiles():
-                file.metadata.add_image(mime, data)
+                file.metadata.append_image(coverartimage)
         elif isinstance(self.item, File):
             file = self.item
-            file.metadata.add_image(mime, data)
+            file.metadata.append_image(coverartimage)

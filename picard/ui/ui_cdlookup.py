@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'ui/cdlookup.ui'
-#
-# Created: Thu Sep 15 13:39:09 2011
-#      by: PyQt4 UI code generator 4.8.3
-#
-# WARNING! All changes made in this file will be lost!
+# Automatically generated - don't edit.
+# Use `python setup.py build_ui` to update it.
 
 from PyQt4 import QtCore, QtGui
 
@@ -17,10 +13,10 @@ except AttributeError:
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName(_fromUtf8("Dialog"))
-        Dialog.resize(480, 240)
+        Dialog.resize(640, 240)
         self.vboxlayout = QtGui.QVBoxLayout(Dialog)
-        self.vboxlayout.setMargin(9)
         self.vboxlayout.setSpacing(6)
+        self.vboxlayout.setMargin(9)
         self.vboxlayout.setObjectName(_fromUtf8("vboxlayout"))
         self.label = QtGui.QLabel(Dialog)
         self.label.setObjectName(_fromUtf8("label"))
@@ -30,8 +26,8 @@ class Ui_Dialog(object):
         self.release_list.setObjectName(_fromUtf8("release_list"))
         self.vboxlayout.addWidget(self.release_list)
         self.hboxlayout = QtGui.QHBoxLayout()
-        self.hboxlayout.setMargin(0)
         self.hboxlayout.setSpacing(6)
+        self.hboxlayout.setMargin(0)
         self.hboxlayout.setObjectName(_fromUtf8("hboxlayout"))
         spacerItem = QtGui.QSpacerItem(111, 31, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
         self.hboxlayout.addItem(spacerItem)
@@ -57,6 +53,6 @@ class Ui_Dialog(object):
         Dialog.setWindowTitle(_("CD Lookup"))
         self.label.setText(_("The following releases on MusicBrainz match the CD:"))
         self.ok_button.setText(_("OK"))
-        self.lookup_button.setText(_("    Lookup manually    "))
+        self.lookup_button.setText(_("Lookup manually"))
         self.cancel_button.setText(_("Cancel"))
 

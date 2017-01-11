@@ -17,10 +17,14 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-from picard.config import IntOption, TextOption, BoolOption, PasswordOption
+from PyQt4.QtGui import QInputDialog
+from PyQt4.QtCore import QUrl
+from picard import config, log
+from picard.util import webbrowser2
 from picard.ui.options import OptionsPage, register_options_page
 from picard.ui.ui_options_general import Ui_GeneralOptionsPage
-from picard.util import rot13
+from picard.const import MUSICBRAINZ_SERVERS
+from picard.collection import load_user_collections
 
 
 class GeneralOptionsPage(OptionsPage):
@@ -32,39 +36,76 @@ class GeneralOptionsPage(OptionsPage):
     ACTIVE = True
 
     options = [
-        TextOption("setting", "server_host", "musicbrainz.org"),
-        IntOption("setting", "server_port", 80),
-        TextOption("setting", "username", ""),
-        PasswordOption("setting", "password", ""),
-        BoolOption("setting", "analyze_new_files", False),
-        BoolOption("setting", "ignore_file_mbids", False),
+        config.TextOption("setting", "server_host", MUSICBRAINZ_SERVERS[0]),
+        config.IntOption("setting", "server_port", 80),
+        config.TextOption("persist", "oauth_refresh_token", ""),
+        config.BoolOption("setting", "analyze_new_files", False),
+        config.BoolOption("setting", "ignore_file_mbids", False),
+        config.BoolOption("setting", "cluster_new_files", False),
+        config.TextOption("persist", "oauth_refresh_token", ""),
+        config.TextOption("persist", "oauth_refresh_token_scopes", ""),
+        config.TextOption("persist", "oauth_access_token", ""),
+        config.IntOption("persist", "oauth_access_token_expires", 0),
+        config.TextOption("persist", "oauth_username", ""),
     ]
 
     def __init__(self, parent=None):
         super(GeneralOptionsPage, self).__init__(parent)
         self.ui = Ui_GeneralOptionsPage()
         self.ui.setupUi(self)
-        mirror_servers = [
-            "musicbrainz.org",
-            ]
-        self.ui.server_host.addItems(sorted(mirror_servers))
+        self.ui.server_host.addItems(MUSICBRAINZ_SERVERS)
+        self.ui.login.clicked.connect(self.login)
+        self.ui.logout.clicked.connect(self.logout)
+        self.update_login_logout()
 
     def load(self):
-        self.ui.server_host.setEditText(self.config.setting["server_host"])
-        self.ui.server_port.setValue(self.config.setting["server_port"])
-        self.ui.username.setText(self.config.setting["username"])
-        self.ui.password.setText(self.config.setting["password"])
-        self.ui.analyze_new_files.setChecked(self.config.setting["analyze_new_files"])
-        self.ui.ignore_file_mbids.setChecked(self.config.setting["ignore_file_mbids"])
+        self.ui.server_host.setEditText(config.setting["server_host"])
+        self.ui.server_port.setValue(config.setting["server_port"])
+        self.ui.analyze_new_files.setChecked(config.setting["analyze_new_files"])
+        self.ui.ignore_file_mbids.setChecked(config.setting["ignore_file_mbids"])
+        self.ui.cluster_new_files.setChecked(config.setting["cluster_new_files"])
 
     def save(self):
-        self.config.setting["server_host"] = unicode(self.ui.server_host.currentText()).strip()
-        self.config.setting["server_port"] = self.ui.server_port.value()
-        self.config.setting["username"] = unicode(self.ui.username.text())
-        # trivially encode the password, just to not make it so apparent
-        self.config.setting["password"] = rot13(unicode(self.ui.password.text()))
-        self.config.setting["analyze_new_files"] = self.ui.analyze_new_files.isChecked()
-        self.config.setting["ignore_file_mbids"] = self.ui.ignore_file_mbids.isChecked()
+        config.setting["server_host"] = unicode(self.ui.server_host.currentText()).strip()
+        config.setting["server_port"] = self.ui.server_port.value()
+        config.setting["analyze_new_files"] = self.ui.analyze_new_files.isChecked()
+        config.setting["ignore_file_mbids"] = self.ui.ignore_file_mbids.isChecked()
+        config.setting["cluster_new_files"] = self.ui.cluster_new_files.isChecked()
 
+    def update_login_logout(self):
+        if self.tagger.xmlws.oauth_manager.is_logged_in():
+            self.ui.logged_in.setText(_("Logged in as <b>%s</b>.") % config.persist["oauth_username"])
+            self.ui.logged_in.show()
+            self.ui.login.hide()
+            self.ui.logout.show()
+        else:
+            self.ui.logged_in.hide()
+            self.ui.login.show()
+            self.ui.logout.hide()
+
+    def login(self):
+        scopes = "profile tag rating collection submit_isrc submit_barcode"
+        authorization_url = self.tagger.xmlws.oauth_manager.get_authorization_url(scopes)
+        webbrowser2.open(authorization_url)
+        authorization_code, ok = QInputDialog.getText(self,
+            _("MusicBrainz Account"), _("Authorization code:"))
+        if ok:
+            self.tagger.xmlws.oauth_manager.exchange_authorization_code(
+                authorization_code, scopes, self.on_authorization_finished)
+
+    def on_authorization_finished(self, successful):
+        if successful:
+            self.tagger.xmlws.oauth_manager.fetch_username(
+                self.on_login_finished)
+
+    def on_login_finished(self, successful):
+        self.update_login_logout()
+        if successful:
+            load_user_collections()
+
+    def logout(self):
+        self.tagger.xmlws.oauth_manager.revoke_tokens()
+        self.update_login_logout()
+        load_user_collections()
 
 register_options_page(GeneralOptionsPage)

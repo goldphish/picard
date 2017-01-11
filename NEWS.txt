@@ -1,4 +1,114 @@
-Version UNRELEASED - 2012-XX-XX
+Version ? - ?
+  * Task: Update Picard logo/icons. (PICARD-760)
+
+Version 1.3.2 - 2015-01-07
+  * Bugfix: Fixed tags from filename dialog not opening on new installations
+
+Version 1.3.1 - 2014-12-20
+  * Bugfix: Picard should use the correct Accept header when talking to web services. (PICARD-273)
+  * Bugfix: Picard refuses to load files if any path component happens to be hidden (PICARD-589)
+  * Bugfix: ConfigUpgradeError: Error during config upgrade from version 0.0.0dev0 to 1.0.0final0 (PICARD-642)
+  * Bugfix: Windows installer sets working directory to %PROGRAMFILES%\MusicBrainz Picard\locale (PICARD-649)
+  * Bugfix: Last.fm plus tooltip help elements are all messed up (PICARD-655)
+  * Bugfix: Regression: Tagger script for cover art filename does not work anymore (PICARD-661)
+  * Bugfix: Retrieving collections causes AttributeError: release_list (PICARD-662)
+  * Bugfix: Artist name makes it impossible to save (PICARD-663)
+  * Improvement: Support the new pregap and data tracks (PICARD-658)
+  * Improvement: Set the originalyear tag when loading a release (PICARD-659)
+  * Improvement: Web service calls to ports 80 and 443 do not need explicit port specification. 443 should be automatically made https. (PICARD-665)
+
+Version 1.3 - 2014-10-20
+ * The "About" window now displays the versions of libraries used by Picard
+ * Picard now correctly handles matching of MP3 files saved in ID3v2.3 tags
+   (which is the version that Microsoft Windows and iTunes both use).
+   Note: You may need to re-save your tags once to get them to match in future.
+ * A sort tags plugin is now provided as tag data is no longer displayed sorted by default.
+ * A new tag, musicbrainz_releasetrackid, containing the MusicBrainz Track MBID
+   introduced in the May 2013 schema change release, is now written to files.
+ * Add %_recordingtitle% (PICARD-515)
+ * Fix plugin install bugs (PICARD-444)
+ * Fix Options / File naming examples to handle primary/secondary release types (PICARD-516)
+ * A new advanced option is available to permanently set the starting directory
+   for the file browser and "Add files/folder" buttons.
+ * Requests to Musicbrainz against your own account e.g. for collections are now handled through SSL (PICARD-337)
+ * Refresh of Albums using Ctrl-R and selection of Other Releases are now more responsive during batch lookups.
+ * Main window is now emitting a "selection_updated" signal, plugin api version bumps to 1.3.0
+ * Append system information to user-agent string
+ * Compilation tag/variable functionality (for tagging & file naming) has been split into two:
+   - %compilation% is now aligned with iTunes, and set only for Various Artists type compilations
+   - %_multiartist% variable now indicates whether this release has tracks by multiple artists
+     (in order to prepend the artist name to the filename as shown in the default file naming script)
+ * autodetect the CD drive on Mac OS X (PICARD-123)
+ * Ignore directories and files while indexing when show_hidden_files option is set to False (PICARD-528)
+ * Add ignore_regex option which allows one to ignore matching paths, can be set in Options > Advanced (PICARD-528)
+ * Added an "artists" multi-value tag to track metadata, based on the one in Jaikoz, which contains the individual
+   artist names from the artist credit. Also useful in scripts (joining phrases like 'feat:' are omitted) and plugins.
+ * Added "_artists_sort", "_albumartists", "_albumartists_sort" variables for scripts and plugins.
+ * Made Picard use the country names also used on the MusicBrainz website (PICARD-205)
+ * New setup.py command `get_po_files` (Retrieve po files from transifex)
+ * New setup.py command `regen_pot_file` (Regenerate po/picard.pot)
+ * New Work tag (which for Classical music is often different from the track title) saved as ID3 TOAL tag.
+ * New Composer Sort Order tag (variable %composersort%).
+ * Improve the Other Releases list to prioritise and separate releases which match the correct number of tracks
+   and your Options / Metadata / Preferred Releases settings for Country and Format.
+ * New %_absolutetracknumber% variable numbering tracks sequentially regardless of disc structure
+   (so you can numbers tracks on multi-disc releases without a disc number)
+ * Support dropping image directly from Google image results to cover art box
+ * Add %_musicbrainz_tracknumber% to hold track # as shown on MusicBrainz release web-page
+   e.g. vinyl/cassette style A1, A2, B1, B2
+ * Show the ID3 version of the file in the Info... dialog (Ctrl-I) (PICARD-218)
+ * Fixed a bug where Picard crashed if a MP3 file had malformed TRCK or TPOS tags (PICARD-112)
+ * Add --files option to setup.py build_ui, used to force .ui to .py regeneration (PICARD-566)
+ * New setup.py command `update_constants` (Regenerate countries.py and attributes.py)
+ * Made Picard use release groups, medium formats and cover art types also used on the MusicBrainz website
+ * Use MusicBrainz Server translations for release groups, medium formats and cover art types
+ * Add checkbox to toggle debug at runtime in log/debug view dialog
+ * Add a plugin to add Artist Official Homepage relationships to the website tag (ID3 WOAR tag)
+ * Add integrated functions $eq_any, $ne_all, $eq_all, $ne_any, $swapprefix and $delprefix.
+ * Add %_performance_attributes%, containing performance attributes for the work e.g. live, cover, medley etc.
+   Use $inmulti in file naming scripts i.e. ...$if($inmulti(%_performance_attributes%,medley), (Medley),)
+ * Add optional `priority` parameter to `register_album_metadata_processor()` and `register_track_metadata_processor()`
+   Default priority is `PluginPriority.NORMAL`, plugins registered with `PluginPriority.HIGH` will be run first,
+   plugins registered with `PluginPriority.LOW` will run last
+ * Add Standardise Performers plugin to convert e.g. Performer [piano and guitar] into
+   Performer [piano] and Performer [guitar].
+ * Add support for release group cover art fallback (PICARD-418, PICARD-53)
+ * Add a clear button to search box
+ * Honour preferred release formats when matching AcoustIds (PICARD-631)
+ * Prevent ZeroDivisionError in some rare cases (PICARD-630)
+
+Version 1.2 - 2013-03-30
+ * Picard now requires at least Python 2.6
+ * Removed support for AmpliFIND/PUIDs
+ * Add support for the Ogg Opus file format
+ * It's now possible to download cover images without any plugin. Cover Art Archive images can be downloaded by image type
+ * Improved directory scanning performance
+ * Prefer already-loaded releases of the same RG when matching files
+ * Allow dropping new files onto specific targets
+ * Add basic collections management support (PICARD-84)
+ * Allow adding custom tags in the tag editing dialog (PICARD-349)
+ * Fix replacing of Windows-incompatible characters (PICARD-393)
+ * Save both primary and secondary release types (PICARD-240)
+ * Handle errors from the AcoustID service better (PICARD-391)
+ * Accept HTTPS URLs on drag-and-drop (PICARD-378)
+
+Version 1.1 - 2012-09-03
+ * Always show basic tags in metadata comparison box, even if empty (title,
+   artist, album, tracknumber, ~length, date) (PICARD-201)
+ * Fixed AcoustID submission failure after removing files from Picard (PICARD-82)
+ * Allow multi-select in new MetaDataBox for delete/remove tags (PICARD-194)
+ * File browser remembers last directory/no longer crashes on OS X (PICARD-104)
+ * Removed the "Run Picard" option from the Windows installer (PICARD-11)
+ * Refreshing a non-album track correctly clears previous track metadata (PICARD-220)
+ * Fixed the preserved tags setting for tags with uppercase characters (PICARD-217)
+ * Added a completion box to the preserved tags setting, and clarified how it works
+ * Store lyrics language in tags instead of text representation language (PICARD-242)
+ * Fix various oddities in the metadata comparison box (PICARD-255, PICARD-256)
+
+Version 1.0 - 2012-06-02
+ * New UI: Extended comparison of existing vs. MB metadata & tags (PICARD-43)
+ * Merged the renaming and moving options pages
+ * Removed the VA file naming format option (there is now a single format option) (PICARD-159)
  * Add %license% tag
  * Made %writer% available to tagger scripts and plugins with contents of songwriter (PICARD-21)
  * Allow two multi-valued variables to be merged in tagger scripting (PICARD-139)
@@ -6,6 +116,27 @@ Version UNRELEASED - 2012-XX-XX
  * Fix $copy not preserving multi-value variables as documented (PICARD-138)
  * Load/save free-text tags for ID3 as TXXX frames (PICARD-148)
  * Fix writing of MusicBrainz Work Id / musicbrainz_workid to tags (PICARD-88)
+ * Handle mimetype for embedding cover art from EXIF jpegs (PICARD-27)
+ * Change cover art box to open MusicBrainz release rather than Amazon
+ * Support manual drag-and-drop of cover art onto a release via cover art box
+ * Only open browser on left-click of cover art box (PICARD-190)
+ * Fix Lookup in Browser (previously 'tag lookup') for clusters (PICARD-186)
+ * Lookup in Browser will now not use MBIDs to lookup unmatched files/clusters
+ * Add Date/Country to CD Lookup results dialog (PICARD-198)
+ * Fix/reset album folksonomy tag counts while refreshing releases (PICARD-4)
+ * Plugins actions can now create sub-menus using the MENU class attribute
+ * New plugin hook register_clusterlist_action
+ * Display the port Picard is listening on at bottom right status bar (PICARD-191)
+ * Make album drops from right hand pane to left default to "unmatched files" again (PICARD-33)
+ * Remove .DS_Store, desktop.ini, and Thumbs.db from otherwise empty directories (PICARD-75)
+ * Update artist translation to use new alias features (primary flag, sort names) (PICARD-200)
+ * Deleted tags aren't indicated as changes (PICARD-165)
+ * Picard log entries have inaccurate timestamp (PICARD-45)
+ * Interface doesn't allow keyboard only management (PICARD-103)
+ * Added option to preserve timestamps of tagged files (PICARD-31)
+ * Added keyboard shortcut to reload release (PICARD-99)
+ * Medium formats weren't listed in order in the "Other versions" menu (PICARD-91)
+ * Couldn't select multiple directories in "Add Folder" window on OS X (PICARD-74)
 
 Version 0.16 - 2011-10-23
  * Added AcoustID support.

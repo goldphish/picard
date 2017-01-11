@@ -19,64 +19,90 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import sys
-from PyQt4.QtCore import (QFile, QRegExp)
+if sys.platform == 'win32':
+    from ctypes import windll
 
-LINUX_CDROM_INFO = '/proc/sys/dev/cdrom/info' 
+from PyQt4.QtCore import QFile, QIODevice
 
+from picard import config
+from picard.util import uniqify
+
+try:
+    from libdiscid.compat import discid
+except ImportError:
+    try:
+        import discid
+    except ImportError:
+        discid = None
+
+
+DEFAULT_DRIVES = []
+if discid is not None:
+    device = discid.get_default_device()
+    if device:
+        DEFAULT_DRIVES.append(device)
+
+LINUX_CDROM_INFO = '/proc/sys/dev/cdrom/info'
+
+# if get_cdrom_drives() lists ALL drives available on the machine
 if sys.platform == 'win32':
     AUTO_DETECT_DRIVES = True
-    from ctypes import windll
-    GetLogicalDrives = windll.kernel32.GetLogicalDrives
-    GetDriveType = windll.kernel32.GetDriveTypeA
-    DRIVE_CDROM = 5
+elif sys.platform == 'linux2' and QFile.exists(LINUX_CDROM_INFO):
+    AUTO_DETECT_DRIVES = True
+else:
+    # There might be more drives we couldn't detect
+    # setting uses a text field instead of a drop-down
+    AUTO_DETECT_DRIVES = False
 
-    def get_cdrom_drives():
-        drives = []
+
+def get_cdrom_drives():
+    """List available disc drives on the machine
+    """
+    # add default drive from libdiscid to the list
+    drives = list(DEFAULT_DRIVES)
+
+    if sys.platform == 'win32':
+        GetLogicalDrives = windll.kernel32.GetLogicalDrives
+        GetDriveType = windll.kernel32.GetDriveTypeA
+        DRIVE_CDROM = 5
         mask = GetLogicalDrives()
         for i in range(26):
             if mask >> i & 1:
-                drive = chr(i + ord("A")) + ":\\"
+                drive = chr(i + ord("A")) + ":"
                 if GetDriveType(drive) == DRIVE_CDROM:
                     drives.append(drive)
-        return drives
 
-elif sys.platform == 'linux2' and QFile.exists(LINUX_CDROM_INFO):
-    AUTO_DETECT_DRIVES = True
-    from PyQt4.QtCore import QIODevice, QString
-    
-    # Read info from /proc/sys/dev/cdrom/info
-    def get_cdrom_drives():
-        drives = []
+    elif sys.platform == 'linux2' and QFile.exists(LINUX_CDROM_INFO):
+        # Read info from /proc/sys/dev/cdrom/info
         cdinfo = QFile(LINUX_CDROM_INFO)
         if cdinfo.open(QIODevice.ReadOnly | QIODevice.Text):
             drive_names = []
             drive_audio_caps = []
-            line = cdinfo.readLine()
-            while not line.isEmpty():
-                if line.indexOf(':') != -1:
+            line = unicode(cdinfo.readLine())
+            while line:
+                if ":" in line:
                     key, values = line.split(':')
                     if key == 'drive name':
-                        drive_names = QString(values).trimmed().split(QRegExp("\\s+"), QString.SkipEmptyParts)
+                        drive_names = values.split()
                     elif key == 'Can play audio':
-                        drive_audio_caps = [v == '1' for v in
-                                            QString(values).trimmed().split(QRegExp("\\s+"), QString.SkipEmptyParts)]
-                line = cdinfo.readLine()
+                        drive_audio_caps = [v == '1' for v in values.split()]
+                        break  # no need to continue past this line
+                line = unicode(cdinfo.readLine())
             # Show only drives that are capable of playing audio
-            for drive in drive_names:
-                if drive_audio_caps[drive_names.indexOf(drive)]:
+            for index, drive in enumerate(drive_names):
+                if drive_audio_caps[index]:
                     device = u'/dev/%s' % drive
                     symlink_target = QFile.symLinkTarget(device)
                     if symlink_target != '':
                         device = symlink_target
                     drives.append(device)
-        return sorted(drives)
 
-else:
-    AUTO_DETECT_DRIVES = False
+    else:
+        for device in config.setting["cd_lookup_device"].split(","):
+            # Need to filter out empty strings,
+            # particularly if the device list is empty
+            if device.strip() != u'':
+                drives.append(device.strip())
 
-    def get_cdrom_drives():
-        from picard.tagger import Tagger
-        tagger = Tagger.instance()
-        # Need to filter out empty strings, particularly if the device list is empty
-        return filter(lambda string: (string != u''),
-                      [d.strip() for d in tagger.config.setting["cd_lookup_device"].split(",")])
+    # make sure no drive is listed twice (given by multiple sources)
+    return sorted(uniqify(drives))

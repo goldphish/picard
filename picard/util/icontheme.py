@@ -30,16 +30,22 @@ else:
         '/usr/share/pixmaps',
     ]
 
-if 'GNOME_DESKTOP_SESSION_ID' in os.environ:
-    _current_theme = os.popen('gconftool-2 -g /desktop/gnome/interface/icon_theme').read().strip() or None
+_current_theme = None
+if 'XDG_CURRENT_DESKTOP' in os.environ:
+    desktop = os.environ['XDG_CURRENT_DESKTOP'].lower()
+    if desktop in ('gnome', 'unity'):
+        _current_theme = (os.popen('gconftool-2 -g /desktop/gnome/interface/icon_theme').read().strip()
+                          or os.popen('dconf read /org/gnome/desktop/interface/icon-theme').read().strip()[1:-1]
+                          or None)
 elif os.environ.get('KDE_FULL_SESSION'):
-    _current_theme = os.popen("kreadconfig --file kdeglobals --group Icons --key Theme --default crystalsvg").read().strip() or None
-else:
-    _current_theme = None
+    _current_theme = (os.popen("kreadconfig --file kdeglobals --group Icons --key Theme --default crystalsvg").read().strip()
+                      or None)
+
 
 ICON_SIZE_MENU = ('16x16',)
 ICON_SIZE_TOOLBAR = ('22x22',)
 ICON_SIZE_ALL = ('22x22', '16x16')
+
 
 def lookup(name, size=ICON_SIZE_ALL):
     icon = QtGui.QIcon()

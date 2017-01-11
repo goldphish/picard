@@ -21,6 +21,7 @@ import os
 import sys
 import webbrowser
 from PyQt4 import QtGui
+from picard.const import PICARD_URLS
 
 """
 A webbrowser extension that respects user's preferred browser on each
@@ -38,7 +39,7 @@ if sys.version_info >= (2, 5):
         if 'KDE_FULL_SESSION' in os.environ and os.environ['KDE_FULL_SESSION'] == 'true' and webbrowser._iscommand('kfmclient'):
             webbrowser.register('kfmclient', None, webbrowser.BackgroundBrowser(["kfmclient", "exec", "%s"]), update_tryorder=-1)
         # GNOME default browser
-        if 'GNOME_DESKTOP_SESSION_ID' in os.environ and webbrowser._iscommand('gnome-open'):
+        if 'XDG_CURRENT_DESKTOP' in os.environ and os.environ['XDG_CURRENT_DESKTOP'].lower() == 'gnome' and webbrowser._iscommand('gnome-open'):
             webbrowser.register('gnome-open', None, webbrowser.BackgroundBrowser(["gnome-open", "%s"]), update_tryorder=-1)
 
 
@@ -51,7 +52,7 @@ else:
         else:
             webbrowser._tryorder.insert(0, 'kfmclient')
     # GNOME default browser
-    if 'GNOME_DESKTOP_SESSION_ID' in os.environ and webbrowser._iscommand('gnome-open'):
+    if 'DESKTOP_SESSION' in os.environ and os.environ['DESKTOP_SESSION'].lower() == 'gnome' and webbrowser._iscommand('gnome-open'):
         webbrowser.register('gnome-open', None, webbrowser.GenericBrowser("gnome-open '%s' &"))
         if 'BROWSER' in os.environ:
             webbrowser._tryorder.insert(len(os.environ['BROWSER'].split(os.pathsep)), 'gnome-open')
@@ -61,6 +62,7 @@ else:
 
 if 'windows-default' in webbrowser._tryorder:
     class WindowsDefault2(webbrowser.BaseBrowser):
+
         def open(self, url, new=0, autoraise=1):
             try:
                 os.startfile(url)
@@ -84,5 +86,9 @@ if 'windows-default' in webbrowser._tryorder:
 def open(url):
     try:
         webbrowser.open(url)
-    except webbrowser.Error, e:
+    except webbrowser.Error as e:
         QtGui.QMessageBox.critical(None, _("Web Browser Error"), _("Error while launching a web browser:\n\n%s") % (e,))
+
+
+def goto(url_id):
+    open(PICARD_URLS[url_id])

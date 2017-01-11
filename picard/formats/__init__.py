@@ -18,15 +18,19 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import sys
+from mutagen import _util
+from picard import log
 from picard.plugin import ExtensionPoint
 
 _formats = ExtensionPoint()
 _extensions = {}
 
+
 def register_format(format):
     _formats.register(format.__module__, format)
     for ext in format.EXTENSIONS:
         _extensions[ext[1:]] = format
+
 
 def supported_formats():
     """Returns list of supported formats."""
@@ -35,20 +39,48 @@ def supported_formats():
         formats.append((format.EXTENSIONS, format.NAME))
     return formats
 
+
+def guess_format(filename, options=_formats):
+    """Select the best matching file type amongst supported formats."""
+    results = []
+    with file(filename, "rb") as fileobj:
+        header = fileobj.read(128)
+        # Calls the score method of a particular format's associated filetype
+        # and assigns a positive score depending on how closely the fileobj's header matches
+        # the header for a particular file format.
+        results = [(option._File.score(filename, fileobj, header), option.__name__, option)
+                   for option in options
+                   if getattr(option, "_File", None)]
+    if results:
+        results.sort()
+        if results[-1][0] > 0:
+            # return the format with the highest matching score
+            return results[-1][2](filename)
+
+    # No positive score i.e. the fileobj's header did not match any supported format
+    return None
+
+
 def open(filename):
     """Open the specified file and return a File instance with the appropriate format handler, or None."""
-    i = filename.rfind(".")
-    if i < 0:
-        return None
-    ext = filename[i+1:].lower()
     try:
-        format = _extensions[ext]
+        # First try to guess the format on the basis of file headers
+        audio_file = guess_format(filename)
+        if not audio_file:
+            i = filename.rfind(".")
+            if i < 0:
+                return None
+            ext = filename[i+1:].lower()
+            # Switch to extension based opening if guess_format fails
+            audio_file = _extensions[ext](filename)
+        return audio_file
     except KeyError:
+        # None is returned if both the methods fail
         return None
-    return format(filename)
+    except Exception as error:
+        log.error("Error occured:\n{}".format(error.message))
+        return None
 
-
-from mutagen import _util
 
 def _insert_bytes_no_mmap(fobj, size, offset, BUFFER_SIZE=2**16):
     """Insert size bytes of empty space starting at offset.
@@ -66,7 +98,7 @@ def _insert_bytes_no_mmap(fobj, size, offset, BUFFER_SIZE=2**16):
     fobj.write('\x00' * size)
     fobj.flush()
     try:
-        locked = _util.lock(fobj)
+        locked = _win32_locking(fobj, filesize, msvcrt.LK_LOCK)
         fobj.truncate(filesize)
 
         fobj.seek(0, 2)
@@ -99,7 +131,8 @@ def _insert_bytes_no_mmap(fobj, size, offset, BUFFER_SIZE=2**16):
         fobj.flush()
     finally:
         if locked:
-            _util.unlock(fobj)
+            _win32_locking(fobj, filesize, msvcrt.LK_UNLCK)
+
 
 def _delete_bytes_no_mmap(fobj, size, offset, BUFFER_SIZE=2**16):
     """Delete size bytes of empty space starting at offset.
@@ -118,7 +151,7 @@ def _delete_bytes_no_mmap(fobj, size, offset, BUFFER_SIZE=2**16):
     try:
         if movesize > 0:
             fobj.flush()
-            locked = _util.lock(fobj)
+            locked = _win32_locking(fobj, filesize, msvcrt.LK_LOCK)
             fobj.seek(offset + size)
             buf = fobj.read(BUFFER_SIZE)
             while buf:
@@ -131,17 +164,32 @@ def _delete_bytes_no_mmap(fobj, size, offset, BUFFER_SIZE=2**16):
         fobj.flush()
     finally:
         if locked:
-            _util.unlock(fobj)
+            _win32_locking(fobj, filesize, msvcrt.LK_UNLCK)
+
+
+def _win32_locking(fobj, nbytes, mode):
+    try:
+        fobj.seek(0)
+        msvcrt.locking(fobj.fileno(), mode, nbytes)
+    except IOError:
+        return False
+    else:
+        return True
+
 
 if sys.platform == 'win32':
+    import msvcrt
     _util.insert_bytes = _insert_bytes_no_mmap
     _util.delete_bytes = _delete_bytes_no_mmap
 
 
 from picard.formats.id3 import (
+    AiffFile,
     MP3File,
     TrueAudioFile,
-    )
+)
+if AiffFile:
+    register_format(AiffFile)
 register_format(MP3File)
 register_format(TrueAudioFile)
 
@@ -151,7 +199,7 @@ from picard.formats.apev2 import (
     OptimFROGFile,
     WavPackFile,
     TAKFile,
-    )
+)
 register_format(MusepackFile)
 register_format(WavPackFile)
 register_format(OptimFROGFile)
@@ -164,12 +212,18 @@ from picard.formats.vorbis import (
     OggSpeexFile,
     OggVorbisFile,
     OggAudioFile,
-    )
+    OggVideoFile,
+    OggOpusFile,
+    with_opus,
+)
 register_format(FLACFile)
 register_format(OggFLACFile)
 register_format(OggSpeexFile)
 register_format(OggVorbisFile)
+if with_opus:
+    register_format(OggOpusFile)
 register_format(OggAudioFile)
+register_format(OggVideoFile)
 
 try:
     from picard.formats.mp4 import MP4File

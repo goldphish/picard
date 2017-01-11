@@ -1,23 +1,28 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'ui/options_interface.ui'
-#
-# Created: Sun Dec  4 00:06:45 2011
-#      by: PyQt4 UI code generator 4.8.3
-#
-# WARNING! All changes made in this file will be lost!
+# Automatically generated - don't edit.
+# Use `python setup.py build_ui` to update it.
 
 from PyQt4 import QtCore, QtGui
 
 try:
     _fromUtf8 = QtCore.QString.fromUtf8
 except AttributeError:
-    _fromUtf8 = lambda s: s
+    def _fromUtf8(s):
+        return s
+
+try:
+    _encoding = QtGui.QApplication.UnicodeUTF8
+    def _translate(context, text, disambig):
+        return QtGui.QApplication.translate(context, text, disambig, _encoding)
+except AttributeError:
+    def _translate(context, text, disambig):
+        return QtGui.QApplication.translate(context, text, disambig)
 
 class Ui_InterfaceOptionsPage(object):
     def setupUi(self, InterfaceOptionsPage):
         InterfaceOptionsPage.setObjectName(_fromUtf8("InterfaceOptionsPage"))
-        InterfaceOptionsPage.resize(421, 212)
+        InterfaceOptionsPage.resize(431, 289)
         self.vboxlayout = QtGui.QVBoxLayout(InterfaceOptionsPage)
         self.vboxlayout.setObjectName(_fromUtf8("vboxlayout"))
         self.groupBox_2 = QtGui.QGroupBox(InterfaceOptionsPage)
@@ -30,12 +35,30 @@ class Ui_InterfaceOptionsPage(object):
         self.toolbar_multiselect = QtGui.QCheckBox(self.groupBox_2)
         self.toolbar_multiselect.setObjectName(_fromUtf8("toolbar_multiselect"))
         self.vboxlayout1.addWidget(self.toolbar_multiselect)
+        self.builtin_search = QtGui.QCheckBox(self.groupBox_2)
+        self.builtin_search.setObjectName(_fromUtf8("builtin_search"))
+        self.vboxlayout1.addWidget(self.builtin_search)
         self.use_adv_search_syntax = QtGui.QCheckBox(self.groupBox_2)
         self.use_adv_search_syntax.setObjectName(_fromUtf8("use_adv_search_syntax"))
         self.vboxlayout1.addWidget(self.use_adv_search_syntax)
         self.quit_confirmation = QtGui.QCheckBox(self.groupBox_2)
         self.quit_confirmation.setObjectName(_fromUtf8("quit_confirmation"))
         self.vboxlayout1.addWidget(self.quit_confirmation)
+        self.starting_directory = QtGui.QCheckBox(self.groupBox_2)
+        self.starting_directory.setObjectName(_fromUtf8("starting_directory"))
+        self.vboxlayout1.addWidget(self.starting_directory)
+        self.horizontalLayout_4 = QtGui.QHBoxLayout()
+        self.horizontalLayout_4.setSpacing(2)
+        self.horizontalLayout_4.setObjectName(_fromUtf8("horizontalLayout_4"))
+        self.starting_directory_path = QtGui.QLineEdit(self.groupBox_2)
+        self.starting_directory_path.setEnabled(False)
+        self.starting_directory_path.setObjectName(_fromUtf8("starting_directory_path"))
+        self.horizontalLayout_4.addWidget(self.starting_directory_path)
+        self.starting_directory_browse = QtGui.QPushButton(self.groupBox_2)
+        self.starting_directory_browse.setEnabled(False)
+        self.starting_directory_browse.setObjectName(_fromUtf8("starting_directory_browse"))
+        self.horizontalLayout_4.addWidget(self.starting_directory_browse)
+        self.vboxlayout1.addLayout(self.horizontalLayout_4)
         self.label = QtGui.QLabel(self.groupBox_2)
         self.label.setObjectName(_fromUtf8("label"))
         self.vboxlayout1.addWidget(self.label)
@@ -58,7 +81,10 @@ class Ui_InterfaceOptionsPage(object):
         self.groupBox_2.setTitle(_("Miscellaneous"))
         self.toolbar_show_labels.setText(_("Show text labels under icons"))
         self.toolbar_multiselect.setText(_("Allow selection of multiple directories"))
+        self.builtin_search.setText(_("Use builtin search rather than looking in browser"))
         self.use_adv_search_syntax.setText(_("Use advanced query syntax"))
         self.quit_confirmation.setText(_("Show a quit confirmation dialog for unsaved changes"))
+        self.starting_directory.setText(_("Begin browsing in the following directory:"))
+        self.starting_directory_browse.setText(_("Browse..."))
         self.label.setText(_("User interface language:"))
 

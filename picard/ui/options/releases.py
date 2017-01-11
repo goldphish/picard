@@ -20,11 +20,65 @@
 from operator import itemgetter
 from locale import strcoll
 from PyQt4 import QtCore, QtGui
-from picard.config import TextOption
-from picard.util import load_release_type_scores, save_release_type_scores
-from picard.ui.options import OptionsPage, OptionsCheckError, register_options_page
+from picard import config
+from picard.ui.options import OptionsPage, register_options_page
 from picard.ui.ui_options_releases import Ui_ReleasesOptionsPage
-from picard.const import RELEASE_COUNTRIES, RELEASE_FORMATS
+from picard.const import (RELEASE_COUNTRIES,
+                          RELEASE_FORMATS,
+                          RELEASE_PRIMARY_GROUPS,
+                          RELEASE_SECONDARY_GROUPS)
+from picard.i18n import ugettext_attr
+
+
+_DEFAULT_SCORE = 0.5
+_release_type_scores = [(g, _DEFAULT_SCORE) for g in RELEASE_PRIMARY_GROUPS.keys() + RELEASE_SECONDARY_GROUPS.keys()]
+
+
+class ReleaseTypeScore:
+
+    def __init__(self, group, layout, label, cell):
+        row, column = cell  # it uses 2 cells (r,c and r,c+1)
+        self.group = group
+        self.layout = layout
+        self.label = QtGui.QLabel(self.group)
+        self.label.setText(label)
+        self.layout.addWidget(self.label, row, column, 1, 1)
+        self.slider = QtGui.QSlider(self.group)
+        self.slider.setMaximum(100)
+        self.slider.setOrientation(QtCore.Qt.Horizontal)
+        self.layout.addWidget(self.slider, row, column + 1, 1, 1)
+        self.reset()
+
+    def setValue(self, value):
+        self.slider.setValue(int(value * 100))
+
+    def value(self):
+        return float(self.slider.value()) / 100.0
+
+    def reset(self):
+        self.setValue(_DEFAULT_SCORE)
+
+
+class RowColIter:
+
+    def __init__(self, max_cells, max_cols=6, step=2):
+        assert(max_cols % step == 0)
+        self.step = step
+        self.cols = max_cols
+        self.rows = int((max_cells - 1) / (self.cols / step)) + 1
+        self.current = (-1, 0)
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        row, col = self.current
+        row += 1
+        if row == self.rows:
+            col += self.step
+            row = 0
+        self.current = (row, col)
+        return self.current
 
 
 class ReleasesOptionsPage(OptionsPage):
@@ -36,61 +90,76 @@ class ReleasesOptionsPage(OptionsPage):
     ACTIVE = True
 
     options = [
-        TextOption("setting", "release_type_scores", "Album 0.5 Single 0.5 EP 0.5 Compilation 0.5 Soundtrack 0.5 Spokenword 0.5 Interview 0.5 Audiobook 0.5 Live 0.5 Remix 0.5 Other 0.5"),
-        TextOption("setting", "preferred_release_countries", u""),
-        TextOption("setting", "preferred_release_formats", u""),
+        config.ListOption("setting", "release_type_scores", _release_type_scores),
+        config.ListOption("setting", "preferred_release_countries", []),
+        config.ListOption("setting", "preferred_release_formats", []),
     ]
-
-    _release_type_sliders = {}
 
     def __init__(self, parent=None):
         super(ReleasesOptionsPage, self).__init__(parent)
         self.ui = Ui_ReleasesOptionsPage()
         self.ui.setupUi(self)
-        self.connect(self.ui.reset_preferred_types_btn, QtCore.SIGNAL("clicked()"), self.reset_preferred_types)
-        self._release_type_sliders["Album"] = self.ui.prefer_album_score
-        self._release_type_sliders["Single"] = self.ui.prefer_single_score
-        self._release_type_sliders["EP"] = self.ui.prefer_ep_score
-        self._release_type_sliders["Compilation"] = self.ui.prefer_compilation_score
-        self._release_type_sliders["Soundtrack"] = self.ui.prefer_soundtrack_score
-        self._release_type_sliders["Spokenword"] = self.ui.prefer_spokenword_score
-        self._release_type_sliders["Interview"] = self.ui.prefer_interview_score
-        self._release_type_sliders["Audiobook"] = self.ui.prefer_audiobook_score
-        self._release_type_sliders["Live"] = self.ui.prefer_live_score
-        self._release_type_sliders["Remix"] = self.ui.prefer_remix_score
-        self._release_type_sliders["Other"] = self.ui.prefer_other_score
 
-        self.connect(self.ui.add_countries, QtCore.SIGNAL("clicked()"), self.add_preferred_countries)
-        self.connect(self.ui.remove_countries, QtCore.SIGNAL("clicked()"), self.remove_preferred_countries)
-        self.connect(self.ui.add_formats, QtCore.SIGNAL("clicked()"), self.add_preferred_formats)
-        self.connect(self.ui.remove_formats, QtCore.SIGNAL("clicked()"), self.remove_preferred_formats)
+        self._release_type_sliders = {}
+
+        def add_slider(name, griditer, context):
+            label = ugettext_attr(name, context)
+            self._release_type_sliders[name] = \
+                ReleaseTypeScore(self.ui.type_group,
+                                 self.ui.gridLayout,
+                                 label,
+                                 next(griditer))
+
+        griditer = RowColIter(len(RELEASE_PRIMARY_GROUPS) +
+                              len(RELEASE_SECONDARY_GROUPS) + 1)  # +1 for Reset button
+        for name in RELEASE_PRIMARY_GROUPS:
+            add_slider(name, griditer, context=u'release_group_primary_type')
+        for name in RELEASE_SECONDARY_GROUPS:
+            add_slider(name, griditer, context=u'release_group_secondary_type')
+
+        self.reset_preferred_types_btn = QtGui.QPushButton(self.ui.type_group)
+        self.reset_preferred_types_btn.setText(_("Reset all"))
+        sizePolicy = QtGui.QSizePolicy(QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.reset_preferred_types_btn.sizePolicy().hasHeightForWidth())
+        self.reset_preferred_types_btn.setSizePolicy(sizePolicy)
+        r, c = next(griditer)
+        self.ui.gridLayout.addWidget(self.reset_preferred_types_btn, r, c, 1, 2)
+        self.reset_preferred_types_btn.clicked.connect(self.reset_preferred_types)
+
+        self.ui.add_countries.clicked.connect(self.add_preferred_countries)
+        self.ui.remove_countries.clicked.connect(self.remove_preferred_countries)
+        self.ui.add_formats.clicked.connect(self.add_preferred_formats)
+        self.ui.remove_formats.clicked.connect(self.remove_preferred_formats)
         self.ui.country_list.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
         self.ui.preferred_country_list.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
         self.ui.format_list.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
         self.ui.preferred_format_list.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
 
     def load(self):
-        scores = load_release_type_scores(self.config.setting["release_type_scores"])
+        scores = dict(config.setting["release_type_scores"])
         for (release_type, release_type_slider) in self._release_type_sliders.iteritems():
-            release_type_slider.setValue(int(scores.get(release_type, 0.5) * 100))
+            release_type_slider.setValue(scores.get(release_type,
+                                                    _DEFAULT_SCORE))
 
         self._load_list_items("preferred_release_countries", RELEASE_COUNTRIES,
-            self.ui.country_list, self.ui.preferred_country_list)
+                              self.ui.country_list, self.ui.preferred_country_list)
         self._load_list_items("preferred_release_formats", RELEASE_FORMATS,
-            self.ui.format_list, self.ui.preferred_format_list)
+                              self.ui.format_list, self.ui.preferred_format_list)
 
     def save(self):
-        scores = {}
+        scores = []
         for (release_type, release_type_slider) in self._release_type_sliders.iteritems():
-            scores[release_type] = float(release_type_slider.value()) / 100.0
-        self.config.setting["release_type_scores"] = save_release_type_scores(scores)
+            scores.append((release_type, release_type_slider.value()))
+        config.setting["release_type_scores"] = scores
 
         self._save_list_items("preferred_release_countries", self.ui.preferred_country_list)
         self._save_list_items("preferred_release_formats", self.ui.preferred_format_list)
 
     def reset_preferred_types(self):
         for release_type_slider in self._release_type_sliders.values():
-            release_type_slider.setValue(50)
+            release_type_slider.reset()
 
     def add_preferred_countries(self):
         self._move_selected_items(self.ui.country_list, self.ui.preferred_country_list)
@@ -113,13 +182,20 @@ class ReleasesOptionsPage(OptionsPage):
             list1.takeItem(list1.row(item))
 
     def _load_list_items(self, setting, source, list1, list2):
-        source_list = [(c[0], c[1]) for c in source.items()]
+        if setting == "preferred_release_countries":
+            source_list = [(c[0], ugettext_countries(c[1])) for c in
+                           source.items()]
+        elif setting == "preferred_release_formats":
+            source_list = [(c[0], ugettext_attr(c[1], u"medium_format")) for c
+                           in source.items()]
+        else:
+            source_list = [(c[0], _(c[1])) for c in source.items()]
         source_list.sort(key=itemgetter(1), cmp=strcoll)
-        saved_data = self.config.setting[setting].split("  ")
+        saved_data = config.setting[setting]
         move = []
         for data, name in source_list:
             item = QtGui.QListWidgetItem(name)
-            item.setData(QtCore.Qt.UserRole, QtCore.QVariant(data))
+            item.setData(QtCore.Qt.UserRole, data)
             try:
                 i = saved_data.index(data)
                 move.append((i, item))
@@ -133,8 +209,8 @@ class ReleasesOptionsPage(OptionsPage):
         data = []
         for i in range(list1.count()):
             item = list1.item(i)
-            data.append(unicode(item.data(QtCore.Qt.UserRole).toString()))
-        self.config.setting[setting] = "  ".join(data)
+            data.append(unicode(item.data(QtCore.Qt.UserRole)))
+        config.setting[setting] = data
 
 
 register_options_page(ReleasesOptionsPage)

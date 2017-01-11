@@ -10,7 +10,7 @@
     <height>436</height>
    </rect>
   </property>
-  <layout class="QVBoxLayout">
+  <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="QTabWidget" name="tabWidget">
      <property name="currentIndex">
@@ -22,19 +22,41 @@
       </attribute>
       <layout class="QVBoxLayout">
        <item>
-        <widget class="QLabel" name="info">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-         </property>
-         <property name="wordWrap">
+        <widget class="QScrollArea" name="info_scroll">
+         <property name="widgetResizable">
           <bool>true</bool>
          </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByKeyboard|Qt::TextSelectableByMouse</set>
-         </property>
+         <widget class="QWidget" name="scrollAreaWidgetContents">
+          <property name="enabled">
+           <bool>true</bool>
+          </property>
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>493</width>
+            <height>334</height>
+           </rect>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayoutLabel">
+           <item>
+            <widget class="QLabel" name="info">
+             <property name="text">
+              <string/>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+             <property name="textInteractionFlags">
+              <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByKeyboard|Qt::TextSelectableByMouse</set>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -44,37 +66,6 @@
        <string>A&amp;rtwork</string>
       </attribute>
       <layout class="QVBoxLayout">
-       <item>
-        <widget class="QListWidget" name="artwork_list">
-         <property name="selectionMode">
-          <enum>QAbstractItemView::SingleSelection</enum>
-         </property>
-         <property name="iconSize">
-          <size>
-           <width>170</width>
-           <height>170</height>
-          </size>
-         </property>
-         <property name="movement">
-          <enum>QListView::Static</enum>
-         </property>
-         <property name="flow">
-          <enum>QListView::LeftToRight</enum>
-         </property>
-         <property name="isWrapping" stdset="0">
-          <bool>false</bool>
-         </property>
-         <property name="resizeMode">
-          <enum>QListView::Fixed</enum>
-         </property>
-         <property name="spacing">
-          <number>10</number>
-         </property>
-         <property name="viewMode">
-          <enum>QListView::IconMode</enum>
-         </property>
-        </widget>
-       </item>
       </layout>
      </widget>
     </widget>
@@ -90,7 +81,6 @@
  </widget>
  <tabstops>
   <tabstop>tabWidget</tabstop>
-  <tabstop>artwork_list</tabstop>
   <tabstop>buttonBox</tabstop>
  </tabstops>
  <resources/>

@@ -18,25 +18,29 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import wave
+from picard import log
 from picard.file import File
 from picard.metadata import Metadata
 from picard.util import encode_filename
 
+
 class WAVFile(File):
     EXTENSIONS = [".wav"]
     NAME = "Microsoft WAVE"
+    _File = None
 
     def _load(self, filename):
-        self.log.debug("Loading file %r", filename)
+        log.debug("Loading file %r", filename)
         f = wave.open(encode_filename(filename), "rb")
         metadata = Metadata()
-        metadata['~#channels'] = f.getnchannels()
-        metadata['~#bits_per_sample'] = f.getsampwidth() * 8
-        metadata['~#sample_rate'] = f.getframerate()
+        metadata['~channels'] = f.getnchannels()
+        metadata['~bits_per_sample'] = f.getsampwidth() * 8
+        metadata['~sample_rate'] = f.getframerate()
         metadata.length = 1000 * f.getnframes() / f.getframerate()
         metadata['~format'] = 'Microsoft WAVE'
+        self._add_path_to_metadata(metadata)
         return metadata
 
-    def _save(self, filename, metadata, settings):
-        self.log.debug("Saving file %r", filename)
+    def _save(self, filename, metadata):
+        log.debug("Saving file %r", filename)
         pass

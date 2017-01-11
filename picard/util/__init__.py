@@ -18,71 +18,24 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-import os.path
+import os
+import ntpath
 import re
 import sys
 import unicodedata
+if sys.platform == 'win32':
+	from ctypes import windll
+
+from time import time
 from PyQt4 import QtCore
-from encodings import rot_13;
 from string import Template
-
-
-def asciipunct(s):
-    mapping = {
-        u"…": u"...",
-        u"‘": u"'",
-        u"’": u"'",
-        u"‚": u"'",
-        u"“": u"\"",
-        u"”": u"\"",
-        u"„": u"\"",
-        u"′": u"'",
-        u"″": u"\"",
-        u"‹": u"<",
-        u"›": u">",
-        u"‐": u"-",
-        u"‒": u"-",
-        u"–": u"-",
-        u"−": u"-",
-        u"—": u"-",
-        u"―": u"--",
-    }
-    for orig, repl in mapping.iteritems():
-        s = s.replace(orig, repl)
-    return s
-
-
-def needs_read_lock(func):
-    """Adds a read lock around ``func``.
-
-    This decorator should be used only on ``LockableObject`` methods."""
-    def locked(self, *args, **kwargs):
-        self.lock_for_read()
-        try:
-            return func(self, *args, **kwargs)
-        finally:
-            self.unlock()
-    locked.__doc__ = func.__doc__
-    locked.__name__ = func.__name__
-    return locked
-
-
-def needs_write_lock(func):
-    """Adds a write lock around ``func``.
-
-    This decorator should be used only on ``LockableObject`` methods."""
-    def locked(self, *args, **kwargs):
-        self.lock_for_write()
-        try:
-            return func(self, *args, **kwargs)
-        finally:
-            self.unlock()
-    locked.__doc__ = func.__doc__
-    locked.__name__ = func.__name__
-    return locked
+# Required for compatibility with lastfmplus which imports this from here rather than loading it direct.
+from functools import partial
+from picard.const import MUSICBRAINZ_SERVERS
 
 
 class LockableObject(QtCore.QObject):
+
     """Read/write lockable object."""
 
     def __init__(self):
@@ -102,32 +55,17 @@ class LockableObject(QtCore.QObject):
         self.__lock.unlock()
 
 
-class LockableDict(dict):
-
-    def __init__(self):
-        self.__lock = QtCore.QReadWriteLock()
-
-    def lock_for_read(self):
-        """Lock the object for read operations."""
-        self.__lock.lockForRead()
-
-    def lock_for_write(self):
-        """Lock the object for write operations."""
-        self.__lock.lockForWrite()
-
-    def unlock(self):
-        """Unlock the object."""
-        self.__lock.unlock()
-
-
 _io_encoding = sys.getfilesystemencoding()
 
-#The following was adapted from k3b's source code:
+
+# The following was adapted from k3b's source code:
 #// On a glibc system the system locale defaults to ANSI_X3.4-1968
 #// It is very unlikely that one would set the locale to ANSI_X3.4-1968
 #// intentionally
-if _io_encoding == "ANSI_X3.4-1968":
-    print """
+def check_io_encoding():
+    if _io_encoding == "ANSI_X3.4-1968":
+        from picard import log
+        log.warning("""
 System locale charset is ANSI_X3.4-1968
 Your system's locale charset (i.e. the charset used to encode filenames)
 is set to ANSI_X3.4-1968. It is highly unlikely that this has been done
@@ -138,12 +76,8 @@ are set. Normally the distribution setup tools take care of this.
 
 Translation: Picard will have problems with non-english characters
                in filenames until you change your charset.
-"""
+""")
 
-
-def set_io_encoding(encoding):
-    """Sets the encoding used in file names."""
-    _io_encoding = encoding
 
 def encode_filename(filename):
     """Encode unicode strings to filesystem encoding."""
@@ -155,6 +89,7 @@ def encode_filename(filename):
     else:
         return filename
 
+
 def decode_filename(filename):
     """Decode strings from filesystem encoding to unicode."""
     if isinstance(filename, unicode):
@@ -162,15 +97,19 @@ def decode_filename(filename):
     else:
         return filename.decode(_io_encoding)
 
+
 def pathcmp(a, b):
     return os.path.normcase(a) == os.path.normcase(b)
 
+
 def format_time(ms):
     """Formats time in milliseconds to a string representation."""
+    ms = float(ms)
     if ms == 0:
         return "?:??"
     else:
         return "%d:%02d" % (round(ms / 1000.0) / 60, round(ms / 1000.0) % 60)
+
 
 def sanitize_date(datestr):
     """Sanitize date format.
@@ -189,88 +128,28 @@ def sanitize_date(datestr):
             date.append(num)
     return ("", "%04d", "%04d-%02d", "%04d-%02d-%02d")[len(date)] % tuple(date)
 
-_unaccent_dict = {u'Æ': u'AE', u'æ': u'ae', u'Œ': u'OE', u'œ': u'oe', u'ß': 'ss'}
-_re_latin_letter = re.compile(r"^(LATIN [A-Z]+ LETTER [A-Z]+) WITH")
-def unaccent(string):
-    """Remove accents ``string``."""
-    result = []
-    for char in string:
-        if char in _unaccent_dict:
-            char = _unaccent_dict[char]
-        else:
-            try:
-                name = unicodedata.name(char)
-                match = _re_latin_letter.search(name)
-                if match:
-                    char = unicodedata.lookup(match.group(1))
-            except:
-                pass
-        result.append(char)
-    return "".join(result)
-
-_re_non_ascii = re.compile(r'[^\x00-\x7F]', re.UNICODE)
-def replace_non_ascii(string, repl="_"):
-    """Replace non-ASCII characters from ``string`` by ``repl``."""
-    return _re_non_ascii.sub(repl, asciipunct(string))
 
 _re_win32_incompat = re.compile(r'["*:<>?|]', re.UNICODE)
 def replace_win32_incompat(string, repl=u"_"):
     """Replace win32 filename incompatible characters from ``string`` by
        ``repl``."""
-    return _re_win32_incompat.sub(repl, string)
+    # Don't replace : with _ for windows drive
+    if sys.platform == "win32" and os.path.isabs(string):
+        drive, rest = ntpath.splitdrive(string)
+        return drive + _re_win32_incompat.sub(repl, rest)
+    else:
+        return _re_win32_incompat.sub(repl, string)
+
 
 _re_non_alphanum = re.compile(r'\W+', re.UNICODE)
 def strip_non_alnum(string):
     """Remove all non-alphanumeric characters from ``string``."""
     return _re_non_alphanum.sub(u" ", string).strip()
 
+
 _re_slashes = re.compile(r'[\\/]', re.UNICODE)
 def sanitize_filename(string, repl="_"):
     return _re_slashes.sub(repl, string)
-
-def make_short_filename(prefix, filename, max_path_length=240, max_length=200,
-                        mid_length=32, min_length=2):
-    """
-    Attempts to shorten the file name to the maximum allowed length.
-
-    max_path_length: The maximum length of the complete path.
-    max_length: The maximum length of a single file or directory name.
-    mid_length: The medium preferred length of a single file or directory.
-    min_length: The minimum allowed length of a single file or directory.
-    """
-    parts = [part.strip() for part in _re_slashes.split(filename)]
-    parts.reverse()
-    filename = os.path.join(*parts)
-    left = len(prefix) + len(filename) + 1 - max_path_length
-
-    for i in range(len(parts)):
-        left -= max(0, len(parts[i]) - max_length)
-        parts[i] = parts[i][:max_length]
-
-    if left > 0:
-        for i in range(len(parts)):
-            length = len(parts[i]) - mid_length
-            if length > 0:
-                length = min(left, length)
-                parts[i] = parts[i][:-length]
-                left -= length
-                if left <= 0:
-                    break
-
-        if left > 0:
-            for i in range(len(parts)):
-                length = len(parts[i]) - min_length
-                if length > 0:
-                    length = min(left, length)
-                    parts[i] = parts[i][:-length]
-                    left -= length
-                    if left <= 0:
-                        break
-
-            if left > 0:
-                raise IOError, "File name is too long."
-
-    return os.path.join(*[a.strip() for a in reversed(parts)])
 
 
 def _reverse_sortname(sortname):
@@ -302,20 +181,6 @@ def translate_from_sortname(name, sortname):
     return name
 
 
-try:
-    from functools import partial
-except ImportError:
-    def partial(func, *args, **keywords):
-        def newfunc(*fargs, **fkeywords):
-            newkeywords = keywords.copy()
-            newkeywords.update(fkeywords)
-            return func(*(args + fargs), **newkeywords)
-        newfunc.func = func
-        newfunc.args = args
-        newfunc.keywords = keywords
-        return newfunc
-
-
 def find_existing_path(path):
     path = encode_filename(path)
     while path and not os.path.isdir(path):
@@ -326,20 +191,16 @@ def find_existing_path(path):
     return decode_filename(path)
 
 
-def call_next(func):
-    def func_wrapper(self, *args, **kwargs):
-        next = args[0]
-        result = None
-        try:
-            result = func(self, *args, **kwargs)
-        except:
-            import traceback
-            self.log.error(traceback.format_exc())
-            next(error=sys.exc_info()[1])
-        else:
-            next(result=result)
-    func_wrapper.__name__ = func.__name__
-    return func_wrapper
+def find_executable(*executables):
+    if sys.platform == 'win32':
+        executables = [e + '.exe' for e in executables]
+    paths = [os.path.dirname(sys.executable)] if sys.executable else []
+    paths += os.environ.get('PATH', '').split(os.pathsep)
+    for path in paths:
+        for executable in executables:
+            f = os.path.join(path, executable)
+            if os.path.isfile(f):
+                return f
 
 
 _mbid_format = Template('$h{8}-$h$l-$h$l-$h$l-$h{12}').safe_substitute(h='[0-9a-fA-F]', l='{4}')
@@ -348,17 +209,234 @@ def mbid_validate(string):
     return _re_mbid_val.match(string)
 
 
-def rot13(input):
-    return u''.join(unichr(rot_13.encoding_map.get(ord(c), ord(c))) for c in input)
+def parse_amazon_url(url):
+    """Extract host and asin from an amazon url.
+    It returns a dict with host and asin keys on success, None else
+    """
+    r = re.compile(r'^https?://(?:www.)?(?P<host>.*?)(?:\:[0-9]+)?/.*/(?P<asin>[0-9B][0-9A-Z]{9})(?:[^0-9A-Z]|$)')
+    match = r.match(url)
+    if match is not None:
+        return match.groupdict()
+    return None
 
 
-def load_release_type_scores(setting):
-    scores = {}
-    values = setting.split()
-    for i in range(0, len(values), 2):
-        scores[values[i]] = float(values[i+1]) if i+1 < len(values) else 0.0
-    return scores
+def throttle(interval):
+    """
+    Throttle a function so that it will only execute once per ``interval``
+    (specified in milliseconds).
+    """
+    mutex = QtCore.QMutex()
+
+    def decorator(func):
+        def later():
+            mutex.lock()
+            func(*decorator.args, **decorator.kwargs)
+            decorator.prev = time()
+            decorator.is_ticking = False
+            mutex.unlock()
+
+        def throttled_func(*args, **kwargs):
+            if decorator.is_ticking:
+                mutex.lock()
+                decorator.args = args
+                decorator.kwargs = kwargs
+                mutex.unlock()
+                return
+            mutex.lock()
+            now = time()
+            r = interval - (now-decorator.prev)*1000.0
+            if r <= 0:
+                func(*args, **kwargs)
+                decorator.prev = now
+            else:
+                decorator.args = args
+                decorator.kwargs = kwargs
+                QtCore.QTimer.singleShot(r, later)
+                decorator.is_ticking = True
+            mutex.unlock()
+
+        return throttled_func
+
+    decorator.prev = 0
+    decorator.is_ticking = False
+    return decorator
 
 
-def save_release_type_scores(scores):
-    return " ".join(["%s %.2f" % v for v in scores.iteritems()])
+def uniqify(seq):
+    """Uniqify a list, preserving order"""
+    # Courtesy of Dave Kirby
+    # See http://www.peterbe.com/plog/uniqifiers-benchmark
+    seen = set()
+    add_seen = seen.add
+    return [x for x in seq if x not in seen and not add_seen(x)]
+
+
+# order is important
+_tracknum_regexps = (
+    # search for explicit track number (prefix "track")
+    r"track[\s_-]*(?:no|nr)?[\s_-]*(\d+)",
+    # search for 2-digit number at start of string
+    r"^(\d{2})\D?",
+    # search for 2-digit number at end of string
+    r"\D?(\d{2})$",
+)
+
+
+def tracknum_from_filename(base_filename):
+    """Guess and extract track number from filename
+    Returns -1 if none found, the number as integer else
+    """
+    filename, _ = os.path.splitext(base_filename)
+    for r in _tracknum_regexps:
+        match = re.search(r, filename, re.I)
+        if match:
+            n = int(match.group(1))
+            if n > 0:
+                return n
+    # find all numbers between 1 and 99
+    # 4-digit or more numbers are very unlikely to be a track number
+    # smaller number is preferred in any case
+    numbers = sorted([int(n) for n in re.findall(r'\d+', filename) if
+                      int(n) <= 99 and int(n) > 0])
+    if numbers:
+        return numbers[0]
+    return -1
+
+
+# Provide os.path.samefile equivalent which is missing in Python under Windows
+if sys.platform == 'win32':
+    def os_path_samefile(p1, p2):
+        ap1 = os.path.abspath(p1)
+        ap2 = os.path.abspath(p2)
+        return ap1 == ap2
+else:
+    os_path_samefile = os.path.samefile
+
+
+def is_hidden(filepath):
+    """Test whether a file or directory is hidden.
+    A file is considered hidden if it starts with a dot
+    on non-Windows systems or if it has the "hidden" flag
+    set on Windows."""
+    name = os.path.basename(os.path.abspath(filepath))
+    return (name.startswith('.') and sys.platform != 'win32') \
+        or _has_hidden_attribute(filepath)
+
+
+def _has_hidden_attribute(filepath):
+    if sys.platform != 'win32':
+        return False
+    # FIXME: On OSX detecting hidden files involves more
+    # than just checking for dot files, see
+    # https://stackoverflow.com/questions/284115/cross-platform-hidden-file-detection
+    try:
+        attrs = windll.kernel32.GetFileAttributesW(unicode(filepath))
+        assert attrs != -1
+        return bool(attrs & 2)
+    except (AttributeError, AssertionError):
+        return False
+
+
+def linear_combination_of_weights(parts):
+    """Produces a probability as a linear combination of weights
+    Parts should be a list of tuples in the form:
+        [(v0, w0), (v1, w1), ..., (vn, wn)]
+    where vn is a value between 0.0 and 1.0
+    and wn corresponding weight as a positive number
+    """
+    total = 0.0
+    sum_of_products = 0.0
+    for value, weight in parts:
+        if value < 0.0:
+            raise ValueError("Value must be greater than or equal to 0.0")
+        if value > 1.0:
+            raise ValueError("Value must be lesser than or equal to 1.0")
+        if weight < 0:
+            raise ValueError("Weight must be greater than or equal to 0.0")
+        total += weight
+        sum_of_products += value * weight
+    if total == 0.0:
+        return 0.0
+    return sum_of_products / total
+
+
+def album_artist_from_path(filename, album, artist):
+    """If album is not set, try to extract album and artist from path
+    """
+    if not album:
+        dirs = os.path.dirname(filename).replace('\\','/').lstrip('/').split('/')
+        if len(dirs) == 0:
+            return album, artist
+        # Strip disc subdirectory from list
+        if len(dirs) > 0:
+            if re.search(r'(^|\s)(CD|DVD|Disc)\s*\d+(\s|$)', dirs[-1], re.I):
+                del dirs[-1]
+        if len(dirs) > 0:
+            # For clustering assume %artist%/%album%/file or %artist% - %album%/file
+            album = dirs[-1]
+            if ' - ' in album:
+                new_artist, album = album.split(' - ', 1)
+                if not artist:
+                    artist = new_artist
+            elif not artist and len(dirs) >= 2:
+                artist = dirs[-2]
+    return album, artist
+
+
+def build_qurl(host, port=80, path=None, mblogin=False, queryargs=None):
+    """
+    Builds and returns a QUrl object from `host`, `port` and `path` and
+    automatically enables HTTPS if necessary.
+
+    Setting `mblogin` to True forces HTTPS on MusicBrainz' servers.
+
+    Encoded query arguments can be provided in `queryargs`, a
+    dictionary mapping field names to values.
+    """
+    url = QtCore.QUrl()
+    url.setHost(host)
+    url.setPort(port)
+    if (# Login is required and we're contacting an MB server
+        (mblogin and host in MUSICBRAINZ_SERVERS and port == 80) or
+        # Or we're contacting some other server via HTTPS.
+         port == 443):
+            url.setScheme("https")
+            url.setPort(443)
+    else:
+        url.setScheme("http")
+
+    if path is not None:
+        url.setPath(path)
+    if queryargs is not None:
+        for k, v in queryargs.iteritems():
+            url.addEncodedQueryItem(k, unicode(v))
+    return url
+
+def union_sorted_lists(list1, list2):
+    """
+    Returns union of two sorted lists.
+    >> list1 = [1, 2, 2, 2, 3]
+    >> list2 = [2, 3, 4]
+    >> union_sorted_lists(list1, list2)
+    >> [1, 2, 2, 2, 3, 4]
+    """
+    union = []
+    i = 0
+    j = 0
+    while i != len(list1) and j != len(list2):
+        if list1[i] > list2[j]:
+            union.append(list2[j])
+            j += 1
+        elif list1[i] < list2[j]:
+            union.append(list1[i])
+            i += 1
+        else:
+            union.append(list1[i])
+            i += 1
+            j += 1
+    if i == len(list1):
+        union.extend(list2[j:])
+    else:
+        union.extend(list1[i:])
+
+    return union

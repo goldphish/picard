@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'ui/passworddialog.ui'
-#
-# Created: Thu Sep 15 13:39:09 2011
-#      by: PyQt4 UI code generator 4.8.3
-#
-# WARNING! All changes made in this file will be lost!
+# Automatically generated - don't edit.
+# Use `python setup.py build_ui` to update it.
 
 from PyQt4 import QtCore, QtGui
 
@@ -52,10 +48,6 @@ class Ui_PasswordDialog(object):
         self.password.setEchoMode(QtGui.QLineEdit.Password)
         self.password.setObjectName(_fromUtf8("password"))
         self.verticalLayout.addWidget(self.password)
-        self.save_authentication = QtGui.QCheckBox(PasswordDialog)
-        self.save_authentication.setChecked(True)
-        self.save_authentication.setObjectName(_fromUtf8("save_authentication"))
-        self.verticalLayout.addWidget(self.save_authentication)
         spacerItem1 = QtGui.QSpacerItem(20, 40, QtGui.QSizePolicy.Minimum, QtGui.QSizePolicy.Expanding)
         self.verticalLayout.addItem(spacerItem1)
         self.buttonbox = QtGui.QDialogButtonBox(PasswordDialog)
@@ -72,5 +64,4 @@ class Ui_PasswordDialog(object):
         PasswordDialog.setWindowTitle(_("Authentication required"))
         self.label.setText(_("Username:"))
         self.label_2.setText(_("Password:"))
-        self.save_authentication.setText(_("Save username and password"))
 

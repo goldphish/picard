@@ -18,10 +18,8 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 from __future__ import print_function
-import re
-import sys
 from operator import itemgetter
-from PyQt4 import QtCore
+from PyQt5 import QtCore
 from picard import (PICARD_APP_NAME, PICARD_ORG_NAME, PICARD_VERSION,
                     version_to_string, version_from_string)
 from picard.util import LockableObject
@@ -65,22 +63,15 @@ class ConfigSection(LockableObject):
     def raw_value(self, key):
         """Return an option value without any type conversion."""
         value = self.__config.value("%s/%s" % (self.__name, key))
-
-        # XXX QPyNullVariant does not exist in all PyQt versions, and was
-        # removed entirely in PyQt5. See:
-        # http://pyqt.sourceforge.net/Docs/PyQt5/pyqt_qvariant.html
-        if str(type(value)) == "<class 'PyQt4.QtCore.QPyNullVariant'>":
-            return ""
-
         return value
 
-    def value(self, name, type, default=None):
+    def value(self, name, option_type, default=None):
         """Return an option value converted to the given Option type."""
         key = "%s/%s" % (self.__name, name)
         self.lock_for_read()
         try:
             if self.__config.contains(key):
-                return type.convert(self.raw_value(name))
+                return option_type.convert(self.raw_value(name))
             return default
         except:
             return default
@@ -93,10 +84,12 @@ class Config(QtCore.QSettings):
     """Configuration."""
 
     def __init__(self):
-        """Initializes the configuration."""
+        pass
 
-        QtCore.QSettings.__init__(self, QtCore.QSettings.IniFormat,
-                                  QtCore.QSettings.UserScope, PICARD_ORG_NAME, PICARD_APP_NAME)
+    def __initialize(self):
+        """Common initializer method for :meth:`from_app` and
+        :meth:`from_file`."""
+
         # If there are no settings, copy existing settings from old format
         # (registry on windows systems)
         if not self.allKeys():
@@ -115,9 +108,30 @@ class Config(QtCore.QSettings):
         self._version = version_from_string(self.application["version"])
         self._upgrade_hooks = dict()
 
+    @classmethod
+    def from_app(cls, parent):
+        """Build a Config object using the default configuration file
+        location."""
+        this = cls()
+        QtCore.QSettings.__init__(this, QtCore.QSettings.IniFormat,
+                                  QtCore.QSettings.UserScope, PICARD_ORG_NAME,
+                                  PICARD_APP_NAME, parent)
+        this.__initialize()
+        return this
+
+    @classmethod
+    def from_file(cls, parent, filename):
+        """Build a Config object using a user-provided configuration file
+        path."""
+        this = cls()
+        QtCore.QSettings.__init__(this, filename, QtCore.QSettings.IniFormat,
+                                  parent)
+        this.__initialize()
+        return this
+
     def switchProfile(self, profilename):
         """Sets the current profile."""
-        key = u"profile/%s" % (profilename,)
+        key = "profile/%s" % (profilename,)
         if self.contains(key):
             self.profile.name = key
         else:
@@ -190,6 +204,7 @@ class Option(QtCore.QObject):
     registry = {}
 
     def __init__(self, section, name, default):
+        super().__init__()
         self.section = section
         self.name = name
         self.default = default
@@ -204,7 +219,7 @@ class Option(QtCore.QObject):
 
 class TextOption(Option):
 
-    convert = unicode
+    convert = str
 
 
 class BoolOption(Option):
@@ -237,25 +252,20 @@ class ListOption(Option):
 class IntListOption(Option):
 
     @staticmethod
-    def convert(value):
-        return map(int, value)
+    def convert(values):
+        return list(map(int, values))
 
 
-_config = Config()
+config = None
+setting = None
+persist = None
 
-setting = _config.setting
-persist = _config.persist
 
-# http://pyqt.sourceforge.net/Docs/PyQt4/qsettings.html#fileName
-# QString QSettings.fileName (self)
-#
-# Returns the path where settings written using this QSettings object are stored.
-#
-# On Windows, if the format is QSettings.NativeFormat, the return value is a system registry path, not a file path.
-FILE_PATH = 0
-REGISTRY_PATH = 1
-storage = _config.fileName()
-if _config.format() == QtCore.QSettings.NativeFormat and sys.platform == "win32":
-    storage_type = REGISTRY_PATH
-else:
-    storage_type = FILE_PATH
+def _setup(app, filename=None):
+    global config, setting, persist
+    if filename is None:
+        config = Config.from_app(app)
+    else:
+        config = Config.from_file(app, filename)
+    setting = config.setting
+    persist = config.persist

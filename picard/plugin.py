@@ -19,11 +19,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-from PyQt4 import QtCore
+from PyQt5 import QtCore
 from collections import defaultdict
 from functools import partial
 import imp
-import json
 import os.path
 import shutil
 import picard.plugins
@@ -36,6 +35,7 @@ from picard import (config,
                     version_to_string,
                     VersionError)
 from picard.const import USER_PLUGIN_DIR, PLUGINS_API
+from picard.util import load_json
 
 
 _suffixes = [s[0] for s in imp.get_suffixes()]
@@ -98,7 +98,7 @@ class ExtensionPoint(object):
         self.__items.append((module, item))
 
     def unregister_module(self, name):
-        self.__items = filter(lambda i: i[0] != name, self.__items)
+        self.__items = [item for item in self.__items if item[0] != name]
 
     def __iter__(self):
         enabled_plugins = config.setting["enabled_plugins"]
@@ -111,7 +111,7 @@ class PluginShared(object):
 
     def __init__(self):
         super(PluginShared, self).__init__()
-        self.new_version = False
+        self.new_version = ""
         self.enabled = False
         self.can_be_updated = False
         self.can_be_downloaded = False
@@ -203,6 +203,13 @@ class PluginData(PluginShared):
         super(PluginData, self).__init__()
         self.module_name = module_name
 
+    def __getattribute__(self, name):
+        try:
+            return PluginShared.__getattribute__(self, name)
+        except AttributeError:
+            log.debug('Attribute %r not found for plugin %r', name, self.module_name)
+            return None
+
     @property
     def files_list(self):
         return ", ".join(self.files.keys())
@@ -211,7 +218,7 @@ class PluginData(PluginShared):
 class PluginManager(QtCore.QObject):
 
     plugin_installed = QtCore.pyqtSignal(PluginWrapper, bool)
-    plugin_updated = QtCore.pyqtSignal(unicode, bool)
+    plugin_updated = QtCore.pyqtSignal(str, bool)
 
 
     def __init__(self):
@@ -227,7 +234,7 @@ class PluginManager(QtCore.QObject):
     def load_plugindir(self, plugindir):
         plugindir = os.path.normpath(plugindir)
         if not os.path.isdir(plugindir):
-            log.warning("Plugin directory %r doesn't exist", plugindir)
+            log.info("Plugin directory %r doesn't exist", plugindir)
             return
         # first, handle eventual plugin updates
         for updatepath in [os.path.join(plugindir, file) for file in
@@ -425,12 +432,12 @@ class PluginManager(QtCore.QObject):
         if error:
             self.tagger.window.set_statusbar_message(
                 N_("Error loading plugins list: %(error)s"),
-                {'error': unicode(reply.errorString())},
+                {'error': reply.errorString()},
                 echo=log.error
             )
         else:
             self._available_plugins = [PluginData(data, key) for key, data in
-                                       json.loads(response)['plugins'].items()]
+                                       load_json(response)['plugins'].items()]
         if callback:
             callback()
 
@@ -465,7 +472,7 @@ class PluginFunctions:
 
     def run(self, *args, **kwargs):
         "Execute registered functions with passed parameters honouring priority"
-        for priority, functions in sorted(self.functions.iteritems(),
+        for priority, functions in sorted(self.functions.items(),
                                           key=lambda i: i[0],
                                           reverse=True):
             for function in functions:

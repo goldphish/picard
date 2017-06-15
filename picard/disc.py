@@ -30,7 +30,7 @@ except ImportError:
         discid = None
 
 import traceback
-from PyQt4 import QtCore
+from PyQt5 import QtCore
 from picard import log
 from picard.ui.cdlookup import CDLookupDialog
 
@@ -45,7 +45,7 @@ class Disc(QtCore.QObject):
     def read(self, device=None):
         if device is None:
             device = discid.get_default_device()
-        log.debug(u"Reading CD using device: %r", device)
+        log.debug("Reading CD using device: %r", device)
         disc = discid.read(device)
         self.id = disc.id
         self.submission_url = disc.submission_url
@@ -57,7 +57,7 @@ class Disc(QtCore.QObject):
         self.tagger.restore_cursor()
         releases = []
         if error:
-            log.error("%r", unicode(http.errorString()))
+            log.error("%r", http.errorString())
         else:
             try:
                 releases = document.metadata[0].disc[0].release_list[0].release

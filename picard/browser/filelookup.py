@@ -18,7 +18,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-from PyQt4 import QtCore
+from PyQt5 import QtCore
 import os.path
 import re
 from picard import log
@@ -33,13 +33,17 @@ class FileLookup(object):
         self.localPort = int(localPort)
         self.port = port
 
-    def _url(self, path, params={}):
+    def _url(self, path, params=None):
+        if params is None:
+            params = {}
         if self.localPort:
             params['tport'] = self.localPort
         url = build_qurl(self.server, self.port, path=path, queryargs=params)
         return url.toEncoded()
 
-    def _build_launch(self, path, params={}):
+    def _build_launch(self, path, params=None):
+        if params is None:
+            params = {}
         return self.launch(self._url(path, params))
 
     def launch(self, url):

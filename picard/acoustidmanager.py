@@ -17,10 +17,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-import json
 from functools import partial
-from PyQt4 import QtCore
+from PyQt5 import QtCore
 from picard import log
+from picard.util import load_json
 
 
 class Submission(object):
@@ -61,15 +61,12 @@ class AcoustIDManager(QtCore.QObject):
         self._check_unsubmitted()
 
     def _unsubmitted(self):
-        for submission in self._fingerprints.itervalues():
+        for submission in self._fingerprints.values():
             if submission.recordingid and submission.orig_recordingid != submission.recordingid:
                 yield submission
 
     def _check_unsubmitted(self):
-        enabled = False
-        for submission in self._unsubmitted():
-            enabled = True
-            break
+        enabled = next(self._unsubmitted(), None) != None
         self.tagger.window.enable_submit(enabled)
 
     def submit(self):
@@ -88,12 +85,12 @@ class AcoustIDManager(QtCore.QObject):
     def __fingerprint_submission_finished(self, fingerprints, document, http, error):
         if error:
             try:
-                error = json.loads(document)
+                error = load_json(document)
                 message = error["error"]["message"]
             except :
                 message = ""
             mparms = {
-                'error': unicode(http.errorString()),
+                'error': http.errorString(),
                 'message': message
             }
             log.error(

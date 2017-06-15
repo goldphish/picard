@@ -141,9 +141,9 @@ def _translate_artist_node(node):
                 else:
                     continue
                 parts.append((score, 5))
-                if alias.attribs.get("type") == u"Artist name":
+                if alias.attribs.get("type") == "Artist name":
                     score = 0.8
-                elif alias.attribs.get("type") == u"Legal Name":
+                elif alias.attribs.get("type") == "Legal Name":
                     score = 0.5
                 else:
                     # as 2014/09/19, only Artist or Legal names should have the
@@ -202,7 +202,7 @@ def artist_credit_to_metadata(node, m, release=False):
         m["artist"] = artist
         m["artistsort"] = artistsort
         m["artists"] = artists
-        m["~artists_sort"] = artistsort
+        m["~artists_sort"] = artistssort
 
 
 def country_list_from_node(node):
@@ -251,12 +251,12 @@ def media_formats_from_node(node):
             formats_count[text] = 1
             formats_order.append(text)
     formats = []
-    for format in formats_order:
-        count = formats_count[format]
-        format = RELEASE_FORMATS.get(format, format)
+    for medium_format in formats_order:
+        count = formats_count[medium_format]
+        medium_format = RELEASE_FORMATS.get(medium_format, medium_format)
         if count > 1:
-            format = str(count) + u"×" + format
-        formats.append(format)
+            medium_format = string_(count) + "×" + medium_format
+        formats.append(medium_format)
     return " + ".join(formats)
 
 
@@ -265,7 +265,7 @@ def track_to_metadata(node, track):
     recording_to_metadata(node.recording[0], m, track)
     m.add_unique('musicbrainz_trackid', node.id)
     # overwrite with data we have on the track
-    for name, nodes in node.children.iteritems():
+    for name, nodes in node.children.items():
         if not nodes:
             continue
         if name == 'title':
@@ -284,7 +284,7 @@ def track_to_metadata(node, track):
 def recording_to_metadata(node, m, track=None):
     m.length = 0
     m.add_unique('musicbrainz_recordingid', node.id)
-    for name, nodes in node.children.iteritems():
+    for name, nodes in node.children.items():
         if not nodes:
             continue
         if name == 'title':
@@ -340,7 +340,7 @@ def work_to_metadata(work, m):
 
 
 def medium_to_metadata(node, m):
-    for name, nodes in node.children.iteritems():
+    for name, nodes in node.children.items():
         if not nodes:
             continue
         if name == 'position':
@@ -358,7 +358,7 @@ def medium_to_metadata(node, m):
 def artist_to_metadata(node, m):
     """Make meatadata dict from a XML 'artist' node."""
     m.add_unique("musicbrainz_artistid", node.id)
-    for name, nodes in node.children.iteritems():
+    for name, nodes in node.children.items():
         if not nodes:
             continue
         if name == "name":
@@ -388,7 +388,7 @@ def artist_to_metadata(node, m):
 def release_to_metadata(node, m, album=None):
     """Make metadata dict from a XML 'release' node."""
     m.add_unique('musicbrainz_albumid', node.id)
-    for name, nodes in node.children.iteritems():
+    for name, nodes in node.children.items():
         if not nodes:
             continue
         if name == 'status':
@@ -438,7 +438,7 @@ def release_to_metadata(node, m, album=None):
 def release_group_to_metadata(node, m, release_group=None):
     """Make metadata dict from a XML 'release-group' node taken from inside a 'release' node."""
     m.add_unique('musicbrainz_releasegroupid', node.id)
-    for name, nodes in node.children.iteritems():
+    for name, nodes in node.children.items():
         if not nodes:
             continue
         if name == 'title':

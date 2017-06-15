@@ -21,7 +21,7 @@ import traceback
 from collections import defaultdict
 from functools import partial
 from itertools import combinations
-from picard import config, log
+from picard import log
 from picard.metadata import Metadata
 from picard.dataobj import DataObject
 from picard.mbxml import media_formats_from_node, label_info_from_node
@@ -30,8 +30,8 @@ from picard.util import uniqify
 
 class ReleaseGroup(DataObject):
 
-    def __init__(self, id):
-        DataObject.__init__(self, id)
+    def __init__(self, rg_id):
+        DataObject.__init__(self, rg_id)
         self.metadata = Metadata()
         self.loaded = False
         self.versions = []
@@ -109,14 +109,14 @@ class ReleaseGroup(DataObject):
             versions[name].append(release)
 
         # de-duplicate names if possible
-        for name, releases in versions.iteritems():
+        for name, releases in versions.items():
             for a, b in combinations(releases, 2):
                 for key in extrakeys:
                     (value1, value2) = (a[key], b[key])
                     if value1 != value2:
                         a['_disambiguate_name'].append(value1)
                         b['_disambiguate_name'].append(value2)
-        for name, releases in versions.iteritems():
+        for name, releases in versions.items():
             for release in releases:
                 dis = " / ".join(filter(None, uniqify(release['_disambiguate_name']))).replace("&", "&&")
                 disname = name if not dis else name + ' / ' + dis
@@ -133,7 +133,7 @@ class ReleaseGroup(DataObject):
     def _request_finished(self, callback, document, http, error):
         try:
             if error:
-                log.error("%r", unicode(http.errorString()))
+                log.error("%r", http.errorString())
             else:
                 try:
                     self._parse_versions(document)
@@ -144,8 +144,8 @@ class ReleaseGroup(DataObject):
             self.loaded = True
             callback()
 
-    def remove_album(self, id):
-        self.loaded_albums.discard(id)
+    def remove_album(self, album_id):
+        self.loaded_albums.discard(album_id)
         self.refcount -= 1
         if self.refcount == 0:
             del self.tagger.release_groups[self.id]

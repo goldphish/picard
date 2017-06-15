@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import unittest
-import picard
 from picard import config
 from picard.metadata import Metadata
 from picard.mbxml import (
@@ -22,10 +21,16 @@ settings = {
 
 class XmlNode(object):
 
-    def __init__(self, text=u'', children={}, attribs={}):
+    def __init__(self, text=u'', children=None, attribs=None):
+        if children is None:
+            self.children = {}
+        else:
+            self.children = children
+        if attribs is None:
+            self.attribs = {}
+        else:
+            self.attribs = attribs
         self.text = text
-        self.children = children
-        self.attribs = attribs
 
     def __repr__(self):
         return repr(self.__dict__)

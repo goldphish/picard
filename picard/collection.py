@@ -18,7 +18,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 from functools import partial
-from PyQt4 import QtCore
+from PyQt5 import QtCore
 from picard import config, log
 
 
@@ -27,12 +27,15 @@ user_collections = {}
 
 class Collection(QtCore.QObject):
 
-    def __init__(self, id, name, size):
-        self.id = id
+    def __init__(self, collection_id, name, size):
+        self.id = collection_id
         self.name = name
         self.pending = set()
         self.size = int(size)
         self.releases = set()
+
+    def __repr__(self):
+        return '<Collection %s (%s)>' % (self.name, self.id)
 
     def add_releases(self, ids, callback):
         ids = ids - self.pending
@@ -61,7 +64,7 @@ class Collection(QtCore.QObject):
             }
             log.debug('Added %(count)i releases to collection "%(name)s"' % mparms)
             self.tagger.window.set_statusbar_message(
-                ungettext('Added %(count)i release to collection "%(name)s"',
+                ngettext('Added %(count)i release to collection "%(name)s"',
                           'Added %(count)i releases to collection "%(name)s"',
                           count),
                 mparms,
@@ -83,13 +86,14 @@ class Collection(QtCore.QObject):
             log.debug('Removed %(count)i releases from collection "%(name)s"' %
                       mparms)
             self.tagger.window.set_statusbar_message(
-                ungettext('Removed %(count)i release from collection "%(name)s"',
+                ngettext('Removed %(count)i release from collection "%(name)s"',
                           'Removed %(count)i releases from collection "%(name)s"',
                           count),
                 mparms,
                 translate=None,
                 echo=None
             )
+
 
 def load_user_collections(callback=None):
     tagger = QtCore.QObject.tagger
@@ -98,7 +102,7 @@ def load_user_collections(callback=None):
         if error:
             tagger.window.set_statusbar_message(
                 N_("Error loading collections: %(error)s"),
-                {'error': unicode(reply.errorString())},
+                {'error': reply.errorString()},
                 echo=log.error
             )
             return
@@ -107,7 +111,7 @@ def load_user_collections(callback=None):
             new_collections = set()
 
             for node in collection_list.collection:
-                if node.attribs.get(u"entity_type") != u"release":
+                if node.attribs.get("entity_type") != "release":
                     continue
                 new_collections.add(node.id)
                 collection = user_collections.get(node.id)
@@ -117,7 +121,7 @@ def load_user_collections(callback=None):
                     collection.name = node.name[0].text
                     collection.size = int(node.release_list[0].count)
 
-            for id in set(user_collections.iterkeys()) - new_collections:
+            for id in set(user_collections.keys()) - new_collections:
                 del user_collections[id]
 
         if callback:
@@ -127,3 +131,19 @@ def load_user_collections(callback=None):
         tagger.xmlws.get_collection_list(partial(request_finished))
     else:
         user_collections.clear()
+
+
+def add_release_to_user_collections(release_node):
+    """Add album to collections"""
+    # Check for empy collection list
+    if ("collection_list" in release_node.children and
+        "collection" in release_node.collection_list[0].children):
+        username = config.persist["oauth_username"].lower()
+        for node in release_node.collection_list[0].collection:
+            if node.editor[0].text.lower() == username:
+                if node.id not in user_collections:
+                    user_collections[node.id] = \
+                        Collection(node.id, node.name[0].text, node.release_list[0].count)
+                user_collections[node.id].releases.add(release_node.id)
+                log.debug("Adding release %r to %r" %
+                          (release_node.id, user_collections[node.id]))

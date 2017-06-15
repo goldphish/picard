@@ -18,7 +18,8 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import re
-from PyQt4 import QtGui
+from PyQt5 import QtWidgets
+from picard import config
 from picard.plugin import ExtensionPoint
 
 
@@ -29,7 +30,7 @@ class OptionsCheckError(Exception):
         self.info = info
 
 
-class OptionsPage(QtGui.QWidget):
+class OptionsPage(QtWidgets.QWidget):
 
     PARENT = None
     SORT_ORDER = 1000
@@ -48,8 +49,23 @@ class OptionsPage(QtGui.QWidget):
     def save(self):
         pass
 
+    def restore_defaults(self):
+        try:
+            options = self.options
+        except AttributeError:
+            return
+        old_options = {}
+        for option in options:
+            if option.section == 'setting':
+                old_options[option.name] = config.setting[option.name]
+                config.setting[option.name] = option.default
+        self.load()
+        # Restore the config values incase the user doesn't save after restoring defaults
+        for key in old_options:
+            config.setting[key] = old_options[key]
+
     def display_error(self, error):
-        dialog = QtGui.QMessageBox(QtGui.QMessageBox.Warning, error.title, error.info, QtGui.QMessageBox.Ok, self)
+        dialog = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, error.title, error.info, QtWidgets.QMessageBox.Ok, self)
         dialog.exec_()
 
     def init_regex_checker(self, regex_edit, regex_error):
@@ -62,9 +78,9 @@ class OptionsPage(QtGui.QWidget):
 
         def check():
             try:
-                re.compile(unicode(regex_edit.text()))
+                re.compile(regex_edit.text())
             except re.error as e:
-                raise OptionsCheckError(_("Regex Error"), str(e))
+                raise OptionsCheckError(_("Regex Error"), string_(e))
 
         def live_checker(text):
             regex_error.setStyleSheet("")

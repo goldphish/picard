@@ -17,7 +17,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-from PyQt4 import QtCore, QtGui
+from PyQt5 import QtCore, QtWidgets
 from picard.ui import PicardDialog
 from picard.ui.ui_cdlookup import Ui_Dialog
 from picard.mbxml import artist_credit_from_node, label_info_from_node
@@ -32,15 +32,15 @@ class CDLookupDialog(PicardDialog):
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
         self.ui.release_list.setSortingEnabled(True)
-        self.ui.release_list.setHeaderLabels([_(u"Album"), _(u"Artist"), _(u"Date"), _(u"Country"),
-                                              _(u"Labels"), _(u"Catalog #s"), _(u"Barcode")])
+        self.ui.release_list.setHeaderLabels([_("Album"), _("Artist"), _("Date"), _("Country"),
+                                              _("Labels"), _("Catalog #s"), _("Barcode")])
         if self.releases:
             for release in self.releases:
                 labels, catalog_numbers = label_info_from_node(release.label_info_list[0])
                 date = release.date[0].text if "date" in release.children else ""
                 country = release.country[0].text if "country" in release.children else ""
                 barcode = release.barcode[0].text if "barcode" in release.children else ""
-                item = QtGui.QTreeWidgetItem(self.ui.release_list)
+                item = QtWidgets.QTreeWidgetItem(self.ui.release_list)
                 item.setText(0, release.title[0].text)
                 item.setText(1, artist_credit_from_node(release.artist_credit[0])[0])
                 item.setText(2, date)
@@ -61,9 +61,9 @@ class CDLookupDialog(PicardDialog):
     def accept(self):
         release_id = self.ui.release_list.currentItem().data(0, QtCore.Qt.UserRole)
         self.tagger.load_album(release_id, discid=self.disc.id)
-        QtGui.QDialog.accept(self)
+        QtWidgets.QDialog.accept(self)
 
     def lookup(self):
         lookup = self.tagger.get_file_lookup()
         lookup.discLookup(self.disc.submission_url)
-        QtGui.QDialog.accept(self)
+        QtWidgets.QDialog.accept(self)

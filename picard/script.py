@@ -21,11 +21,14 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import re
+import operator
+from functools import reduce
 from collections import namedtuple
-from inspect import getargspec
+from inspect import getfullargspec
 from picard.metadata import Metadata
 from picard.metadata import MULTI_VALUED_JOINER
 from picard.plugin import ExtensionPoint
+from picard.util import uniqify
 
 
 class ScriptError(Exception):
@@ -48,7 +51,7 @@ class UnknownFunction(ScriptError):
     pass
 
 
-class ScriptText(unicode):
+class ScriptText(str):
 
     def eval(self, state):
         return self
@@ -64,9 +67,9 @@ class ScriptVariable(object):
 
     def eval(self, state):
         name = self.name
-        if name.startswith(u"_"):
-            name = u"~" + name[1:]
-        return state.context.get(name, u"")
+        if name.startswith("_"):
+            name = "~" + name[1:]
+        return state.context.get(name, "")
 
 
 FunctionRegistryItem = namedtuple("FunctionRegistryItem",
@@ -87,7 +90,7 @@ class ScriptFunction(object):
                 raise ScriptError(
                     "Wrong number of arguments for $%s: Expected %s, got %i at position %i, line %i"
                     % (name,
-                       str(argnum_bound.lower)
+                       string_(argnum_bound.lower)
                         if argnum_bound.upper is None
                         else "%i - %i" % (argnum_bound.lower, argnum_bound.upper),
                        argcount,
@@ -126,7 +129,7 @@ def isidentif(ch):
 
 class ScriptParser(object):
 
-    """Tagger script parser.
+    r"""Tagger script parser.
 
 Grammar:
   text       ::= [^$%] | '\$' | '\%' | '\(' | '\)' | '\,'
@@ -290,7 +293,14 @@ def register_script_function(function, name=None, eval_args=True,
     If ``check_argcount`` is ``False`` the number of arguments passed to the
     function will not be verified."""
 
-    args, varargs, keywords, defaults = getargspec(function)
+    args, varargs, varkw, defaults, kwonlyargs, kwonlydefaults, annotations = getfullargspec(function)
+
+    required_kwonlyargs = len(kwonlyargs)
+    if kwonlydefaults is not None:
+        required_kwonlyargs -= len(kwonlydefaults.keys())
+    if required_kwonlyargs:
+        raise TypeError("Functions with required keyword-only parameters are not supported")
+
     args = len(args) - 1  # -1 for the parser
     varargs = varargs is not None
     defaults = len(defaults) if defaults else 0
@@ -305,6 +315,39 @@ def register_script_function(function, name=None, eval_args=True,
                     argcount if argcount and check_argcount else False)
          )
     )
+
+
+def _compute_int(operation, *args):
+    return string_(reduce(operation, map(int, args)))
+
+
+def _compute_logic(operation, *args):
+    return operation(args)
+
+
+def _get_multi_values(parser, multi, separator):
+    if isinstance(separator, ScriptExpression):
+        separator = separator.eval(parser)
+
+    if separator == MULTI_VALUED_JOINER:
+        # Convert ScriptExpression containing only a single variable into variable
+        if (isinstance(multi, ScriptExpression) and
+                len(multi) == 1 and
+                isinstance(multi[0], ScriptVariable)):
+            multi = multi[0]
+
+        # If a variable, return multi-values
+        if isinstance(multi, ScriptVariable):
+            if multi.name.startswith("_"):
+                name = "~" + multi.name[1:]
+            else:
+                name = multi.name
+            return parser.context.getall(name)
+
+    # Fall-back to converting to a string and splitting if haystack is an expression
+    # or user has overridden the separator character.
+    multi = multi.eval(parser)
+    return multi.split(separator) if separator else [multi]
 
 
 def func_if(parser, _if, _then, _else=None):
@@ -364,7 +407,7 @@ def func_pad(parser, text, length, char):
 
 
 def func_strip(parser, text):
-    return re.sub("\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def func_replace(parser, text, old, new):
@@ -378,9 +421,14 @@ def func_in(parser, text, needle):
         return ""
 
 
-def func_inmulti(parser, text, value, separator=MULTI_VALUED_JOINER):
-    """Splits ``text`` by ``separator``, and returns true if the resulting list contains ``value``."""
-    return func_in(parser, text.split(separator) if separator else [text], value)
+def func_inmulti(parser, haystack, needle, separator=MULTI_VALUED_JOINER):
+    """Searches for ``needle`` in ``haystack``, supporting a list variable for
+       ``haystack``. If a string is used instead, then a ``separator`` can be
+       used to split it. In both cases, it returns true if the resulting list
+       contains exactly ``needle`` as a member."""
+
+    needle = needle.eval(parser)
+    return func_in(parser, _get_multi_values(parser, haystack, separator), needle)
 
 
 def func_rreplace(parser, text, old, new):
@@ -394,7 +442,7 @@ def func_rsearch(parser, text, pattern):
             return match.group(1)
         except IndexError:
             return match.group(0)
-    return u""
+    return ""
 
 
 def func_num(parser, text, length):
@@ -413,6 +461,13 @@ def func_unset(parser, name):
     """Unsets the variable ``name``."""
     if name.startswith("_"):
         name = "~" + name[1:]
+    # Allow wild-card unset for certain keys
+    if name in ('performer:*', 'comment:*', 'lyrics:*'):
+        name = name[:-1]
+        for key in list(parser.context.keys()):
+            if key.startswith(name):
+                del parser.context[key]
+        return ""
     try:
         del parser.context[name]
     except KeyError:
@@ -440,7 +495,7 @@ def func_get(parser, name):
     """Returns the variable ``name`` (equivalent to ``%name%``)."""
     if name.startswith("_"):
         name = "~" + name[1:]
-    return parser.context.get(name, u"")
+    return parser.context.get(name, "")
 
 
 def func_copy(parser, new, old):
@@ -462,7 +517,7 @@ def func_copymerge(parser, new, old):
         old = "~" + old[1:]
     newvals = parser.context.getall(new)
     oldvals = parser.context.getall(old)
-    parser.context[new] = newvals + list(set(oldvals) - set(newvals))
+    parser.context[new] = uniqify(newvals + oldvals)
     return ""
 
 
@@ -475,57 +530,78 @@ def func_trim(parser, text, char=None):
         return text.strip()
 
 
-def func_add(parser, x, y):
-    """Add ``y`` to ``x``."""
+def func_add(parser, x, y, *args):
+    """Adds ``y`` to ``x``.
+       Can be used with an arbitrary number of arguments.
+       Eg: $add(x, y, z) = ((x + y) + z)
+    """
     try:
-        return str(int(x) + int(y))
+        return _compute_int(operator.add, x, y, *args)
     except ValueError:
         return ""
 
 
-def func_sub(parser, x, y):
-    """Subtracts ``y`` from ``x``."""
+def func_sub(parser, x, y, *args):
+    """Subtracts ``y`` from ``x``.
+       Can be used with an arbitrary number of arguments.
+       Eg: $sub(x, y, z) = ((x - y) - z)
+    """
     try:
-        return str(int(x) - int(y))
+        return _compute_int(operator.sub, x, y, *args)
     except ValueError:
         return ""
 
 
-def func_div(parser, x, y):
-    """Divides ``x`` by ``y``."""
+def func_div(parser, x, y, *args):
+    """Divides ``x`` by ``y``.
+       Can be used with an arbitrary number of arguments.
+       Eg: $div(x, y, z) = ((x / y) / z)
+    """
     try:
-        return str(int(x) / int(y))
+        return _compute_int(operator.floordiv, x, y, *args)
     except ValueError:
         return ""
 
 
-def func_mod(parser, x, y):
-    """Returns the remainder of ``x`` divided by ``y``."""
+def func_mod(parser, x, y, *args):
+    """Returns the remainder of ``x`` divided by ``y``.
+       Can be used with an arbitrary number of arguments.
+       Eg: $mod(x, y, z) = ((x % y) % z)
+    """
     try:
-        return str(int(x) % int(y))
+        return _compute_int(operator.mod, x, y, *args)
     except ValueError:
         return ""
 
 
-def func_mul(parser, x, y):
-    """Multiplies ``x`` by ``y``."""
+def func_mul(parser, x, y, *args):
+    """Multiplies ``x`` by ``y``.
+       Can be used with an arbitrary number of arguments.
+       Eg: $mul(x, y, z) = ((x * y) * z)
+    """
     try:
-        return str(int(x) * int(y))
+        return _compute_int(operator.mul, x, y, *args)
     except ValueError:
         return ""
 
 
-def func_or(parser, x, y):
-    """Returns true, if either ``x`` or ``y`` not empty."""
-    if x or y:
+def func_or(parser, x, y, *args):
+    """Returns true, if either ``x`` or ``y`` not empty.
+       Can be used with an arbitrary number of arguments. The result is
+       true if ANY of the arguments is not empty.
+    """
+    if _compute_logic(any, x, y, *args):
         return "1"
     else:
         return ""
 
 
-def func_and(parser, x, y):
-    """Returns true, if both ``x`` and ``y`` are not empty."""
-    if x and y:
+def func_and(parser, x, y, *args):
+    """Returns true, if both ``x`` and ``y`` are not empty.
+       Can be used with an arbitrary number of arguments. The result is
+       true if ALL of the arguments are not empty.
+    """
+    if _compute_logic(all, x, y, *args):
         return "1"
     else:
         return ""
@@ -596,7 +672,11 @@ def func_gte(parser, x, y):
 
 
 def func_len(parser, text=""):
-    return str(len(text))
+    return string_(len(text))
+
+
+def func_lenmulti(parser, multi, separator=MULTI_VALUED_JOINER):
+    return func_len(parser, _get_multi_values(parser, multi, separator))
 
 
 def func_performer(parser, pattern="", join=", "):
@@ -609,7 +689,7 @@ def func_performer(parser, pattern="", join=", "):
 
 def func_matchedtracks(parser, arg):
     if parser.file and parser.file.parent:
-        return str(parser.file.parent.album.get_num_matched_tracks())
+        return string_(parser.file.parent.album.get_num_matched_tracks())
     return "0"
 
 
@@ -637,7 +717,7 @@ def func_initials(parser, text=""):
 def func_firstwords(parser, text, length):
     try:
         length = int(length)
-    except ValueError as e:
+    except ValueError:
         length = 0
     if len(text) <= length:
         return text
@@ -645,6 +725,18 @@ def func_firstwords(parser, text, length):
         if text[length] == ' ':
             return text[:length]
         return text[:length].rsplit(' ', 1)[0]
+
+
+def func_startswith(parser, text, prefix):
+    if text.startswith(prefix):
+        return "1"
+    return "0"
+
+
+def func_endswith(parser, text, suffix):
+    if text.endswith(suffix):
+        return "1"
+    return "0"
 
 
 def func_truncate(parser, text, length):
@@ -770,16 +862,19 @@ register_script_function(func_lte, "lte")
 register_script_function(func_gt, "gt")
 register_script_function(func_gte, "gte")
 register_script_function(func_in, "in")
-register_script_function(func_inmulti, "inmulti")
+register_script_function(func_inmulti, "inmulti", eval_args=False)
 register_script_function(func_copy, "copy")
 register_script_function(func_copymerge, "copymerge")
 register_script_function(func_len, "len")
+register_script_function(func_lenmulti, "lenmulti", eval_args=False)
 register_script_function(func_performer, "performer")
 register_script_function(func_matchedtracks, "matchedtracks")
 register_script_function(func_is_complete, "is_complete")
 register_script_function(func_firstalphachar, "firstalphachar")
 register_script_function(func_initials, "initials")
 register_script_function(func_firstwords, "firstwords")
+register_script_function(func_startswith, "startswith")
+register_script_function(func_endswith, "endswith")
 register_script_function(func_truncate, "truncate")
 register_script_function(func_swapprefix, "swapprefix", check_argcount=False)
 register_script_function(func_delprefix, "delprefix", check_argcount=False)

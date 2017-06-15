@@ -1,13 +1,9 @@
-import locale
 import os.path
 import unittest
 import shutil
 import sys
 import tempfile
-import picard
 from picard import config
-from picard.metadata import Metadata
-from picard.mbxml import track_to_metadata, release_to_metadata
 from picard.releasegroup import ReleaseGroup
 from picard.i18n import setup_gettext
 
@@ -22,10 +18,16 @@ settings = {
 
 class XmlNode(object):
 
-    def __init__(self, text=u'', children={}, attribs={}):
+    def __init__(self, text=u'', children=None, attribs=None):
+        if children is None:
+            self.children = {}
+        else:
+            self.children = children
+        if attribs is None:
+            self.attribs = {}
+        else:
+            self.attribs = attribs
         self.text = text
-        self.children = children
-        self.attribs = attribs
 
     def __repr__(self):
         return repr(self.__dict__)
@@ -44,7 +46,7 @@ class XmlNode(object):
 class ReleaseTest(unittest.TestCase):
     def setUp(self):
         # we are using temporary locales for tests
-        self.tmp_path = tempfile.mkdtemp().decode("utf-8")
+        self.tmp_path = tempfile.mkdtemp()
         if sys.hexversion >= 0x020700F0:
             self.addCleanup(shutil.rmtree, self.tmp_path)
         self.localedir = os.path.join(self.tmp_path, 'locale')

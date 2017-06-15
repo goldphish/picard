@@ -17,14 +17,16 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301,
 # USA.
-from PyQt4.QtCore import QObject
-from picard import config, log
+from PyQt5.QtCore import QObject
+from picard import config
 from picard.plugin import PluginFunctions, PluginPriority
 from picard.similarity import similarity2
 from picard.util import (
     linear_combination_of_weights,
 )
+from picard.util.tags import PRESERVED_TAGS
 from picard.mbxml import artist_credit_from_node
+from picard.util.imagelist import ImageList
 
 MULTI_VALUED_JOINER = '; '
 
@@ -45,11 +47,19 @@ class Metadata(dict):
 
     def __init__(self):
         super(Metadata, self).__init__()
-        self.images = []
+        self.images = ImageList()
         self.deleted_tags = set()
         self.length = 0
 
+    def __bool__(self):
+        return bool(len(self) or len(self.images))
+
     def append_image(self, coverartimage):
+        self.images.append(coverartimage)
+
+    def set_front_image(self, coverartimage):
+        # First remove all front images
+        self.images[:] = [img for img in self.images if not img.is_front_image()]
         self.images.append(coverartimage)
 
     @property
@@ -92,7 +102,7 @@ class Metadata(dict):
                     except ValueError:
                         ia = a
                         ib = b
-                    score = 1.0 - abs(cmp(ia, ib))
+                    score = 1.0 - (int(ia != ib))
                 else:
                     score = similarity2(a, b)
                 parts.append((score, weight))
@@ -219,18 +229,21 @@ class Metadata(dict):
         self.update(other)
 
     def update(self, other):
-        for key in other.iterkeys():
+        for key in other.keys():
             self.set(key, other.getall(key)[:])
         if other.images:
             self.images = other.images[:]
         if other.length:
             self.length = other.length
 
-        self.deleted_tags.update(other.deleted_tags)      
+        self.deleted_tags.update(other.deleted_tags)
+        # Remove deleted tags from UI on save
+        for tag in other.deleted_tags:
+            self.pop(tag, None)
 
     def clear(self):
         dict.clear(self)
-        self.images = []
+        self.images = ImageList()
         self.length = 0
         self.deleted_tags = set()
 
@@ -245,7 +258,7 @@ class Metadata(dict):
             return default
 
     def __getitem__(self, name):
-        return self.get(name, u'')
+        return self.get(name, '')
 
     def set(self, name, values):
         dict.__setitem__(self, name, values)
@@ -255,7 +268,7 @@ class Metadata(dict):
     def __setitem__(self, name, values):
         if not isinstance(values, list):
             values = [values]
-        values = filter(None, map(unicode, values))
+        values = [string_(value) for value in values if value]
         if len(values):
             self.set(name, values)
         else:
@@ -274,21 +287,12 @@ class Metadata(dict):
     def delete(self, name):
         if name in self:
             self.pop(name, None)
-        
-        self.deleted_tags.add(name)     
-
-    def iteritems(self):
-        for name, values in dict.iteritems(self):
-            for value in values:
-                yield name, value
+        self.deleted_tags.add(name)
 
     def items(self):
-        """Returns the metadata items.
-
-        >>> m.items()
-        [("key1", "value1"), ("key1", "value2"), ("key2", "value3")]
-        """
-        return list(self.iteritems())
+        for name, values in dict.items(self):
+            for value in values:
+                yield name, value
 
     def rawitems(self):
         """Returns the metadata items.
@@ -300,8 +304,8 @@ class Metadata(dict):
 
     def apply_func(self, func):
         for key, values in self.rawitems():
-            if not key.startswith("~"):
-                self[key] = map(func, values)
+            if key not in PRESERVED_TAGS:
+                self[key] = [func(value) for value in values]
 
     def strip_whitespace(self):
         """Strip leading/trailing whitespace.

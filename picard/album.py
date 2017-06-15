@@ -19,7 +19,8 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 import traceback
-from PyQt4 import QtCore, QtNetwork
+from operator import itemgetter
+from PyQt5 import QtCore, QtNetwork
 from picard import config, log
 from picard.coverart import coverart
 from picard.metadata import (Metadata,
@@ -32,9 +33,10 @@ from picard.track import Track
 from picard.script import ScriptParser
 from picard.ui.item import Item
 from picard.util import format_time, mbid_validate
+from picard.util.imagelist import update_metadata_images
 from picard.util.textencoding import asciipunct
 from picard.cluster import Cluster
-from picard.collection import Collection, user_collections
+from picard.collection import add_release_to_user_collections
 from picard.mbxml import (
     release_group_to_metadata,
     release_to_metadata,
@@ -47,17 +49,18 @@ register_album_metadata_processor(coverart)
 
 
 class AlbumArtist(DataObject):
-    def __init__(self, id):
-        DataObject.__init__(self, id)
+    def __init__(self, album_artist_id):
+        DataObject.__init__(self, album_artist_id)
 
 
 class Album(DataObject, Item):
 
     release_group_loaded = QtCore.pyqtSignal()
 
-    def __init__(self, id, discid=None):
-        DataObject.__init__(self, id)
+    def __init__(self, album_id, discid=None):
+        DataObject.__init__(self, album_id)
         self.metadata = Metadata()
+        self.orig_metadata = Metadata()
         self.tracks = []
         self.loaded = False
         self.load_task = None
@@ -71,9 +74,10 @@ class Album(DataObject, Item):
         self.errors = []
         self.status = None
         self._album_artists = []
+        self.update_metadata_images_enabled = True
 
     def __repr__(self):
-        return '<Album %s %r>' % (self.id, self.metadata[u"album"])
+        return '<Album %s %r>' % (self.id, self.metadata["album"])
 
     def iterfiles(self, save=False):
         for track in self.tracks:
@@ -83,10 +87,13 @@ class Album(DataObject, Item):
             for file in self.unmatched_files.iterfiles():
                 yield file
 
-    def append_album_artist(self, id):
+    def enable_update_metadata_images(self, enabled):
+        self.update_metadata_images_enabled = enabled
+
+    def append_album_artist(self, album_artist_id):
         """Append artist id to the list of album artists
         and return an AlbumArtist instance"""
-        album_artist = AlbumArtist(id)
+        album_artist = AlbumArtist(album_artist_id)
         self._album_artists.append(album_artist)
         return album_artist
 
@@ -140,13 +147,7 @@ class Album(DataObject, Item):
         m['totaldiscs'] = release_node.medium_list[0].count
 
         # Add album to collections
-        if "collection_list" in release_node.children:
-            for node in release_node.collection_list[0].collection:
-                if node.editor[0].text.lower() == config.persist["oauth_username"].lower():
-                    if node.id not in user_collections:
-                        user_collections[node.id] = \
-                            Collection(node.id, node.name[0].text, node.release_list[0].count)
-                    user_collections[node.id].releases.add(self.id)
+        add_release_to_user_collections(release_node)
 
         # Run album metadata plugins
         try:
@@ -164,7 +165,7 @@ class Album(DataObject, Item):
         parsed = False
         try:
             if error:
-                self.error_append(unicode(http.errorString()))
+                self.error_append(http.errorString())
                 # Fix for broken NAT releases
                 if error == QtNetwork.QNetworkReply.ContentNotFoundError:
                     nats = False
@@ -190,7 +191,7 @@ class Album(DataObject, Item):
             if parsed or error:
                 self._finalize_loading(error)
         # does http need to be set to None to free the memory used by the network response?
-        # http://pyqt.sourceforge.net/Docs/PyQt4/qnetworkaccessmanager.html says:
+        # http://qt-project.org/doc/qt-5/qnetworkaccessmanager.html says:
         #     After the request has finished, it is the responsibility of the user
         #     to delete the QNetworkReply object at an appropriate time.
         #     Do not directly delete it inside the slot connected to finished().
@@ -250,7 +251,7 @@ class Album(DataObject, Item):
                         track = self._finalize_loading_track(track_node, mm, artists, va, absolutetracknumber, discpregap)
                         track.metadata['~datatrack'] = "1"
 
-            totalalbumtracks = str(absolutetracknumber)
+            totalalbumtracks = string_(absolutetracknumber)
 
             for track in self._new_tracks:
                 track.metadata["~totalalbumtracks"] = totalalbumtracks
@@ -260,6 +261,7 @@ class Album(DataObject, Item):
             self._tracks_loaded = True
 
         if not self._requests:
+            self.enable_update_metadata_images(False)
             # Prepare parser for user's script
             if config.setting["enable_tagger_scripts"]:
                 for s_pos, s_name, s_enabled, s_text in config.setting["list_of_scripts"]:
@@ -281,6 +283,7 @@ class Album(DataObject, Item):
                         self._new_metadata.strip_whitespace()
 
             for track in self.tracks:
+                track.metadata_images_changed.connect(self.update_metadata_images)
                 for file in list(track.linked_files):
                     file.move(self.unmatched_files)
             self.metadata = self._new_metadata
@@ -290,6 +293,7 @@ class Album(DataObject, Item):
             self.loaded = True
             self.status = None
             self.match_files(self.unmatched_files.files)
+            self.enable_update_metadata_images(True)
             self.update()
             self.tagger.window.set_statusbar_message(
                 N_('Album %(id)s loaded: %(artist)s - %(album)s'),
@@ -389,10 +393,14 @@ class Album(DataObject, Item):
     def _add_file(self, track, file):
         self._files += 1
         self.update(update_tracks=False)
+        file.metadata_images_changed.connect(self.update_metadata_images)
+        self.update_metadata_images()
 
     def _remove_file(self, track, file):
         self._files -= 1
         self.update(update_tracks=False)
+        file.metadata_images_changed.disconnect(self.update_metadata_images)
+        self.update_metadata_images()
 
     def match_files(self, files, use_recordingid=True):
         """Match files to tracks on this album, based on metadata similarity or recordingid."""
@@ -409,7 +417,7 @@ class Album(DataObject, Item):
                     if sim >= config.setting['track_matching_threshold']:
                         matches.append((sim, track))
             if matches:
-                matches.sort(reverse=True)
+                matches.sort(key=itemgetter(0), reverse=True)
                 file.move(matches[0][1])
             else:
                 file.move(self.unmatched_files)
@@ -421,7 +429,7 @@ class Album(DataObject, Item):
         if recordingid is not None:
             matches = self._get_recordingid_matches(file, recordingid)
             if matches:
-                matches.sort(reverse=True)
+                matches.sort(key=itemgetter(0), reverse=True)
                 file.move(matches[0][1])
                 return
         self.match_files([file], use_recordingid=False)
@@ -462,7 +470,7 @@ class Album(DataObject, Item):
         return True
 
     def can_view_info(self):
-        return (self.loaded and self.metadata and self.metadata.images) or self.errors
+        return (self.loaded and (self.metadata.images or self.orig_metadata.images)) or self.errors
 
     def is_album_like(self):
         return True
@@ -486,6 +494,8 @@ class Album(DataObject, Item):
         for track in self.tracks:
             if not track.is_complete():
                 return False
+        if self.get_num_unmatched_files():
+            return False
         else:
             return True
 
@@ -517,15 +527,28 @@ class Album(DataObject, Item):
                     if track.is_linked():
                         linked_tracks += 1
 
-                text = u'%s\u200E (%d/%d' % (title, linked_tracks, len(self.tracks))
+                text = '%s\u200E (%d/%d' % (title, linked_tracks, len(self.tracks))
                 unmatched = self.get_num_unmatched_files()
                 if unmatched:
                     text += '; %d?' % (unmatched,)
                 unsaved = self.get_num_unsaved_files()
                 if unsaved:
                     text += '; %d*' % (unsaved,)
-                text += ungettext("; %i image", "; %i images",
-                                  len(self.metadata.images)) % len(self.metadata.images)
+                # CoverArt.set_metadata uses the orig_metadata.images if metadata.images is empty
+                # in order to show existing cover art if there's no cover art for a release. So
+                # we do the same here in order to show the number of images consistently.
+                if self.metadata.images:
+                    metadata = self.metadata
+                else:
+                    metadata = self.orig_metadata
+
+                number_of_images = len(metadata.images)
+                if getattr(metadata, 'has_common_images', True):
+                    text += ngettext("; %i image", "; %i images",
+                                      number_of_images) % number_of_images
+                else:
+                    text += ngettext("; %i image not in all tracks", "; %i different images among tracks",
+                                      number_of_images) % number_of_images
                 return text + ')'
             else:
                 return title
@@ -557,20 +580,39 @@ class Album(DataObject, Item):
             self.tagger.albums[mbid] = self
             self.load(priority=True, refresh=True)
 
+    def update_metadata_images(self):
+        if not self.update_metadata_images_enabled:
+            return
+
+        update_metadata_images(self)
+
+        self.update(False)
+
+    def keep_original_images(self):
+        self.enable_update_metadata_images(False)
+        for track in self.tracks:
+            track.keep_original_images()
+        for file in list(self.unmatched_files.files):
+            file.keep_original_images()
+        self.enable_update_metadata_images(True)
+        self.update_metadata_images()
+
 
 class NatAlbum(Album):
 
     def __init__(self):
-        Album.__init__(self, id="NATS")
+        Album.__init__(self, "NATS")
         self.loaded = True
         self.update()
 
     def update(self, update_tracks=True):
+        self.enable_update_metadata_images(False)
         self.metadata["album"] = config.setting["nat_name"]
         for track in self.tracks:
             track.metadata["album"] = self.metadata["album"]
             for file in track.linked_files:
                 track.update_file_metadata(file)
+        self.enable_update_metadata_images(True)
         Album.update(self, update_tracks)
 
     def _finalize_loading(self, error):
